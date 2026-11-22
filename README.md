@@ -4,21 +4,34 @@ Juego de escritorio por turnos, inspirado en Street Fighter, hecho con Python
 3.11+ y Pygame. Los personajes, escenarios y efectos se dibujan con geometría;
 no requiere navegador, imágenes externas ni acceso a internet para jugar.
 
-## Ejecutar en Windows (PowerShell)
+## Instalación y Ejecución en Windows (PowerShell)
 
-Desde la raíz del proyecto, con el entorno virtual ya preparado:
+Requiere Python 3.11 o superior. Después de clonar el repositorio, abre
+PowerShell en la carpeta del proyecto y sigue estos tres pasos:
 
-```powershell
-.\.venv\Scripts\python.exe .\main.py
-```
+1. **Crea tu propio entorno virtual:**
 
-Para preparar una instalación nueva:
+   ```powershell
+   python -m venv .venv
+   ```
 
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe .\main.py
-```
+   Si `python` no funciona, usa `py -m venv .venv`.
+
+2. **Instala las dependencias dentro del entorno:**
+
+   ```powershell
+   .\.venv\Scripts\pip install -r requirements.txt
+   ```
+
+3. **Ejecuta el juego:**
+
+   ```powershell
+   .\.venv\Scripts\python main.py
+   ```
+
+El entorno `.venv` se genera en cada computadora y no se comparte en Git,
+porque contiene rutas locales. No es necesario activarlo para usar estos
+comandos. Las carpetas de caché también están excluidas del repositorio.
 
 ## Controles
 
