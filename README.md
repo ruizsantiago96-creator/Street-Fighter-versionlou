@@ -35,9 +35,12 @@ comandos. Las carpetas de caché también están excluidas del repositorio.
 
 ## Controles
 
+- Portada arcade: clic en **Jugar**, **Enter** o **Espacio** para abrir la
+  selección de personajes. **Salir** o **Esc** cierra el juego.
 - Selección: clic en los luchadores, hora, modo y profundidad. Clic en
   **Iniciar Combate**, o **Enter**. El lugar se elige aleatoriamente entre los
   cinco escenarios al iniciar cada pelea y cada revancha; puede repetirse.
+  **Volver a portada** o **Esc** regresa al inicio y conserva tus elecciones.
 - Jugador vs IA: P1 usa los botones inferiores; P2 responde después de 700 ms.
   Los botones apagados explican sus condiciones al pasar el cursor.
 - IA vs IA: un turno cada 1.2 segundos. **Espacio** o **Pausar / Reanudar**
@@ -155,8 +158,9 @@ Si falta un PNG, el renderizador utiliza las figuras geométricas de respaldo.
 ```
 
 Las pruebas gráficas utilizan el controlador virtual de SDL y no abren una
-ventana visible. El modo `--smoke-test` comprueba seis fotogramas del bucle real,
-incluyendo selección y combate, y termina automáticamente.
+ventana visible. El modo `--smoke-test` comprueba ocho fotogramas del bucle real,
+incluyendo portada, selección y combate, y termina automáticamente. Con
+`--capturas carpeta` guarda una imagen de cada pantalla en la carpeta indicada.
 
 La suite reproduce las 36 transiciones de las dos corridas v7, también con los
 lados invertidos, y comprueba las 32 combinaciones de personajes y profundidad

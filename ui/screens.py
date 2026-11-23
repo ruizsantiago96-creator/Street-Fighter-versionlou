@@ -5,6 +5,7 @@ from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
+from math import sin
 
 import pygame
 
@@ -40,6 +41,80 @@ class Configuracion:
             raise ValueError("La profundidad debe ser 2 o 3")
 
 
+class Portada:
+    """Entrada arcade; no crea combates ni inicia trabajadores de IA."""
+
+    def botones(self) -> list[Boton]:
+        return [Boton(pygame.Rect(470, 453, 340, 72), "JUGAR", "jugar", ORO),
+                Boton(pygame.Rect(540, 545, 200, 38), "SALIR", "salir", TENUE)]
+
+    def evento(self, evento: pygame.event.Event) -> str | None:
+        if evento.type == pygame.KEYDOWN:
+            if evento.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                return "jugar"
+            if evento.key == pygame.K_ESCAPE:
+                return "salir"
+        for boton in self.botones():
+            if boton.pulsado(evento):
+                return boton.clave
+        return None
+
+    def dibujar(self, s: pygame.Surface, ahora: int, mouse: tuple[int, int]) -> None:
+        tiempo = ahora / 1000
+        s.fill((8, 11, 24))
+        # Horizonte de neón, edificios y suelo en perspectiva.
+        for y in range(100, 561):
+            intensidad = max(0, 1 - abs(y - 375) / 275)
+            pygame.draw.line(s, (int(11 + 30 * intensidad), 13, int(29 + 39 * intensidad)), (0, y), (1280, y))
+        pygame.draw.circle(s, (78, 35, 65), (640, 375), 210)
+        for y in range(220, 570, 16):
+            pygame.draw.line(s, (23, 16, 37), (420, y), (860, y), 5)
+        for i in range(20):
+            x = i * 68
+            alto = 65 + (i * 47 % 100)
+            pygame.draw.rect(s, (12, 18, 32), (x, 560 - alto, 56, alto))
+            for wy in range(570 - alto, 550, 19):
+                pygame.draw.rect(s, (36, 49, 68), (x + 10, wy, 6, 4))
+        pygame.draw.line(s, AZUL, (0, 560), (1280, 560), 2)
+        for x in range(-1280, 2561, 160):
+            pygame.draw.line(s, (26, 39, 63), (640 + (x - 640) // 4, 561), (x, 720))
+        for i in range(9):
+            avance = ((i / 9 + tiempo * 0.08) % 1) ** 2
+            y = 562 + round(avance * 158)
+            pygame.draw.line(s, (26, 39, 63), (0, y), (1280, y))
+        # Los mismos sprites locales que aparecen en la pelea.
+        dibujar_personaje(s, crear_personaje(Nombre.JULI, Vista.DERECHA), 220, 588, tiempo, escala=1.65)
+        dibujar_personaje(s, crear_personaje(Nombre.BISON, Vista.IZQUIERDA), 1060, 588, tiempo, escala=1.65)
+        texto(s, "E E O   /   A R C A D E", (47, 30), 16, AZUL, True)
+        texto(s, "COMBATE TÁCTICO POR TURNOS", (921, 30), 14, TENUE)
+        self.centrado(s, "CADA DECISIÓN CAMBIA LA PELEA", 145, 16, ORO)
+        for titulo, y, tamano in (("TACTICAL", 178, 88), ("FIGHTER", 266, 102)):
+            sombra = fuente(tamano, True).render(titulo, True, (139, 39, 62))
+            frente = fuente(tamano, True).render(titulo, True, TEXTO if titulo == "TACTICAL" else ORO)
+            s.blit(sombra, sombra.get_rect(midtop=(646, y + 6)))
+            s.blit(frente, frente.get_rect(midtop=(640, y)))
+        self.centrado(s, "4 LUCHADORES   /   5 ARENAS   /   UN SOLO GANADOR", 391, 14, TENUE)
+        for boton in self.botones():
+            hover = boton.rect.collidepoint(mouse)
+            if boton.clave == "jugar":
+                halo = boton.rect.inflate(12, 12)
+                pygame.draw.rect(s, (80 + int(20 * sin(tiempo * 3)), 63, 30), halo, 2, border_radius=8)
+                pygame.draw.rect(s, (255, 223, 132) if hover else ORO, boton.rect, border_radius=5)
+                self.centrado(s, "JUGAR   /   PLAY", boton.rect.y + 17, 26, (20, 24, 36))
+            else:
+                pygame.draw.rect(s, BORDE if hover else (18, 24, 38), boton.rect, border_radius=5)
+                self.centrado(s, "SALIR", boton.rect.y + 7, 16, TEXTO if hover else TENUE)
+        self.centrado(s, "PULSA ENTER O ESPACIO PARA JUGAR", 620, 13,
+                      TEXTO if sin(tiempo * 3) > -0.3 else TENUE)
+        texto(s, "PYTHON / PYGAME", (32, 686), 12, TENUE)
+        texto(s, "ESC: salir", (1175, 686), 12, TENUE)
+
+    @staticmethod
+    def centrado(s: pygame.Surface, contenido: str, y: int, tamano: int, color: tuple[int, int, int]) -> None:
+        imagen = fuente(tamano, True).render(contenido, True, color)
+        s.blit(imagen, imagen.get_rect(midtop=(640, y)))
+
+
 class Seleccion:
     def __init__(self, config: Configuracion | None = None) -> None:
         self.config = config or Configuracion()
@@ -67,18 +142,21 @@ class Seleccion:
                                  habilitado=self.config.modo is Modo.IA_IA,
                                  seleccionado=self.config.exposicion is valor))
         botones.append(Boton(pygame.Rect(866, 496, 384, 72), "INICIAR COMBATE  →", "iniciar", ORO, seleccionado=True))
+        botones.append(Boton(pygame.Rect(1040, 26, 210, 38), "← VOLVER A PORTADA", "portada", TENUE))
         return botones
 
     def evento(self, evento: pygame.event.Event) -> bool:
         from dataclasses import replace
 
-        if evento.type == pygame.KEYDOWN and evento.key == pygame.K_RETURN:
+        if evento.type == pygame.KEYDOWN and evento.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
             return True
         for boton in self.botones():
             if not boton.pulsado(evento):
                 continue
             if boton.clave == "iniciar":
                 return True
+            if boton.clave == "portada":
+                continue  # La navegación la gestiona Aplicacion.
             campo, valor = boton.clave.split(":", 1)
             if campo == "p1":
                 self.config = replace(self.config, p1=Nombre(valor))
@@ -99,7 +177,7 @@ class Seleccion:
         for x in range(0, 1280, 42):
             pygame.draw.line(s, (17, 23, 35), (x, 0), (x - 240, 720))
         texto(s, "EEO / TACTICAL FIGHTER", (24, 21), 16, ORO, True)
-        texto(s, "CADA MOVIMIENTO CAMBIA EL ESTADO.", (24, 46), 36, TEXTO, True)
+        texto(s, "ELIGE A TUS LUCHADORES", (24, 46), 36, TEXTO, True)
         texto(s, "Elige a tus luchadores y prepara el experimento.", (24, 94), 18, TENUE)
         texto(s, "01 / JUGADOR UNO", (24, 124), 14, AZUL, True)
         texto(s, "02 / JUGADOR DOS", (664, 124), 14, ROJO, True)
@@ -128,7 +206,7 @@ class Seleccion:
         texto(s, "ESCENARIO ALEATORIO", (24, 620), 14, AZUL, True)
         texto(s, "El lugar se sortea al iniciar cada combate y cada revancha.", (246, 618), 17, TENUE)
         texto(s, "1280 × 720  /  60 FPS  /  PYTHON + PYGAME", (24, 693), 11, TENUE)
-        texto(s, "ENTER: iniciar   ·   ESC: salir", (1018, 693), 12, TENUE)
+        texto(s, "ENTER: iniciar   ·   ESC: portada", (990, 693), 12, TENUE)
 
 
 @dataclass(frozen=True, slots=True)

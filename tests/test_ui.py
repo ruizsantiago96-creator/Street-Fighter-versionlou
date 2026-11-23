@@ -20,7 +20,7 @@ from engine.operators import ESPECIALES, Operador, TipoOperador as T
 from main import Aplicacion
 from ui.hud import BORDE, ORO, EntradaLog, explicar_operador
 from ui.renderer import Renderer
-from ui.screens import Combate, Configuracion, Modo, Seleccion
+from ui.screens import Combate, Configuracion, Modo, Portada, Seleccion
 
 
 @pytest.fixture(scope="module")
@@ -68,6 +68,8 @@ def test_inicio_sortea_entre_todos_los_escenarios(pantalla: pygame.Surface, monk
     try:
         config = app.seleccion.config
         app.evento(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN), 0)
+        assert app.combate is None and not app.en_portada
+        app.evento(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN), 1)
         assert app.combate is not None
         assert app.combate.estado.escenario.lugar is lugar
         assert app.combate.estado.escenario.hora is config.hora
@@ -99,6 +101,8 @@ def test_inicio_menu_y_revancha(pantalla: pygame.Surface) -> None:
     app = Aplicacion()
     try:
         app.evento(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN), 0)
+        assert app.combate is None
+        app.evento(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN), 1)
         assert app.combate is not None
         anterior = app.combate
         app.iniciar(10)
@@ -108,9 +112,83 @@ def test_inicio_menu_y_revancha(pantalla: pygame.Surface) -> None:
         app.evento(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE), 20)
         assert app.combate is None
         app.evento(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE), 30)
+        assert app.en_portada and app.ejecutando
+        app.evento(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE), 40)
         assert not app.ejecutando
     finally:
         app.cerrar()
+
+
+@pytest.mark.parametrize("tecla", [pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE])
+def test_portada_abre_seleccion_sin_iniciar_combate(pantalla: pygame.Surface, tecla: int) -> None:
+    app = Aplicacion()
+    try:
+        assert app.en_portada and app.combate is None
+        app.dibujar(pantalla, 0, (0, 0))
+        app.evento(pygame.event.Event(pygame.KEYDOWN, key=tecla), 10)
+        assert not app.en_portada and app.combate is None
+        app.dibujar(pantalla, 10, (0, 0))
+    finally:
+        app.cerrar()
+
+
+def test_portada_clic_volver_y_conservar_seleccion(pantalla: pygame.Surface) -> None:
+    app = Aplicacion()
+    try:
+        jugar = next(b for b in app.portada.botones() if b.clave == "jugar")
+        app.evento(clic(jugar.rect), 0)
+        assert not app.en_portada and app.combate is None
+        personaje = next(b for b in app.seleccion.botones() if b.clave == "p1:Makoto")
+        app.evento(clic(personaje.rect), 10)
+        volver = next(b for b in app.seleccion.botones() if b.clave == "portada")
+        app.evento(clic(volver.rect), 20)
+        assert app.en_portada
+        app.evento(clic(jugar.rect), 30)
+        assert app.seleccion.config.p1 is Nombre.MAKOTO
+        iniciar = next(b for b in app.seleccion.botones() if b.clave == "iniciar")
+        app.evento(clic(iniciar.rect), 40)
+        assert app.combate is not None
+        assert app.combate.estado.p1.nombre is Nombre.MAKOTO
+    finally:
+        app.cerrar()
+
+
+@pytest.mark.parametrize("tecla", [pygame.K_RETURN, pygame.K_KP_ENTER])
+def test_enter_en_cola_real_abre_menu_y_combate(pantalla: pygame.Surface, tecla: int) -> None:
+    app = Aplicacion()
+    try:
+        pygame.event.clear()
+        pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=tecla))
+        for evento in pygame.event.get():
+            app.evento(evento, 0)
+        assert not app.en_portada and app.combate is None
+        pygame.event.post(pygame.event.Event(pygame.KEYUP, key=tecla))
+        pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=tecla))
+        for evento in pygame.event.get():
+            app.evento(evento, 10)
+        assert app.combate is not None
+    finally:
+        app.cerrar()
+
+
+def test_portada_salir_y_clic_fuera(pantalla: pygame.Surface) -> None:
+    app = Aplicacion()
+    try:
+        app.evento(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(0, 0)), 0)
+        assert app.en_portada and app.ejecutando
+        salir = next(b for b in app.portada.botones() if b.clave == "salir")
+        app.evento(clic(salir.rect), 10)
+        assert not app.ejecutando
+    finally:
+        app.cerrar()
+
+
+def test_portada_fondo_animado(pantalla: pygame.Surface) -> None:
+    portada = Portada()
+    portada.dibujar(pantalla, 0, (0, 0))
+    antes = pygame.image.tostring(pantalla, "RGB")
+    portada.dibujar(pantalla, 650, (640, 489))
+    assert pygame.image.tostring(pantalla, "RGB") != antes
 
 
 @pytest.mark.parametrize("hora", Hora)
