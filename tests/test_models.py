@@ -13,7 +13,7 @@ def test_personajes_iniciales(nombre: Nombre) -> None:
     assert p.nombre is nombre
     assert p.puntos_salud == 1000
     assert p.medidor_super == p.recarga_energia == p.dano_recibido == 0
-    assert p.especial is Especial.ACTIVO
+    assert p.especial is (Especial.ACTIVO if nombre is Nombre.JULI else Especial.NORMAL)
     assert p.postura is Postura.NEUTRAL
     assert p.acciones is Accion.REPOSO
     assert p.colision is Colision.VULNERABLE
@@ -32,7 +32,7 @@ def test_estado_inicial_e_inmutabilidad() -> None:
     assert hash(estado)
 
 
-@pytest.mark.parametrize("campo,valor", [("puntos_salud", -1), ("puntos_salud", 1001), ("medidor_super", 4), ("medidor_super", -1), ("recarga_energia", 2), ("dano_recibido", -1), ("puntos_salud", True)])
+@pytest.mark.parametrize("campo,valor", [("puntos_salud", -1), ("puntos_salud", 1001), ("medidor_super", 4), ("medidor_super", -1), ("recarga_energia", 2), ("dano_recibido", -1), ("puntos_salud", True), ("puntos_salud", 1), ("puntos_salud", 451)])
 def test_dominios_invalidos(campo: str, valor: int) -> None:
     with pytest.raises(ValueError):
         replace(crear_personaje(Nombre.JULI), **{campo: valor})
@@ -63,17 +63,17 @@ def test_normalizacion_conserva_amenaza_rival(actor: Actor) -> None:
     rival = replace(s.personaje(actor.rival), acciones=Accion.ATACANDO, colision=Colision.ATACANDO)
     s = s.con_personajes(actor, propio, rival)
     nuevo = iniciar_turno(s, actor)
-    assert nuevo.personaje(actor).acciones is Accion.REPOSO
-    assert nuevo.personaje(actor).postura is Postura.NEUTRAL
-    assert nuevo.personaje(actor).colision is Colision.VULNERABLE
+    assert nuevo.personaje(actor).acciones is Accion.DANO
+    assert nuevo.personaje(actor).postura is Postura.DESPLAZAMIENTO
+    assert nuevo.personaje(actor).colision is Colision.INVENCIBLE
     assert nuevo.personaje(actor).dano_recibido == 0
-    assert nuevo.personaje(actor.rival) == rival
+    assert nuevo.personaje(actor.rival) == replace(rival, colision=Colision.VULNERABLE)
 
 
 def test_ko_y_empate() -> None:
     s = crear_estado()
     s = replace(s, p1=replace(s.p1, puntos_salud=0))
     assert s.terminado and s.ganador is Actor.P2
-    assert iniciar_turno(s, Actor.P1).p1.postura is Postura.FINAL
+    assert iniciar_turno(s, Actor.P1) == s
     s = replace(s, p2=replace(s.p2, puntos_salud=0))
     assert s.ganador is None

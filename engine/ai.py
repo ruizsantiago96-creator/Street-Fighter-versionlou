@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import inf
 
-from engine.models import Accion, Actor, Colision, Distancia, Estado, Nombre, Postura
+from engine.models import Accion, Actor, Colision, Distancia, Estado, Nombre, iniciar_turno
 from engine.operators import Operador, TipoOperador, ejecutar_turno, operadores_prioritarios, operadores_validos
 
 
@@ -20,54 +20,39 @@ class DecisionIA:
     evaluaciones: tuple[EvaluacionJugada, ...]
     nodos_visitados: int
     motivo: str = ""
+    estrategia: str = "Minimax"
 
 
-def opciones_con_iniciativa(estado: Estado, actor: Actor) -> tuple[Operador, ...]:
-    """Política de progreso: atacar o preparar un ataque con operadores legales.
+def opciones_con_iniciativa(estado: Estado, actor: Actor, permitir_inteligentes: bool = True) -> tuple[Operador, ...]:
+    """Tras inactividad, ataca o prepara un ataque respetando la v7.
 
-    Se activa tras tres turnos sin daño, o desde el inicio entre dos Bison.
-    No modifica precondiciones, salud, medidores ni normalización.
-    Los inteligentes mantienen máxima prioridad.
+    Dos Bison se acercan hasta Contacto antes de golpearse: en Cerca sus
+    drenajes obligatorios pueden alternarse sin daño ni ganancia neta.
+    No crea energía, no omite contraataques ni añade operadores auxiliares.
     """
-    opciones = operadores_prioritarios(estado, actor)
+    opciones = (operadores_prioritarios(estado, actor) if permitir_inteligentes else
+                tuple(op for op in operadores_validos(estado, actor) if not op.prioridad))
     if not opciones or opciones[0].prioridad:
         return opciones
-    rival = estado.personaje(actor.rival)
-    p = estado.personaje(actor)
-    espejo_psycho = p.nombre is Nombre.BISON and rival.nombre is Nombre.BISON
-    # Un golpe Cerca entre dos Bison provoca drenajes obligatorios alternados.
-    # Planear Psycho Crusher en Media evita entrar en ese componente cíclico.
-    ataques = tuple(op for op in opciones if (not espejo_psycho or op.tipo is not TipoOperador.GOLPEAR)
+    p, rival = estado.personaje(actor), estado.personaje(actor.rival)
+    espejo = p.nombre is Nombre.BISON and rival.nombre is Nombre.BISON
+    ataques = tuple(op for op in opciones
+                    if not (espejo and p.distancia is Distancia.CERCA and op.tipo is TipoOperador.GOLPEAR)
                     and op.aplicar(estado, actor).personaje(actor.rival).puntos_salud < rival.puntos_salud)
     if ataques:
         return ataques
-    if espejo_psycho:
-        if p.acciones is Accion.ATACANDO or p.postura is not Postura.NEUTRAL:
-            preparar = TipoOperador.REPOSAR
-        elif p.distancia is Distancia.CONTACTO and rival.acciones is Accion.ATACANDO:
-            preparar = TipoOperador.REPOSAR
-        elif p.medidor_super < 3:
-            preparar = TipoOperador.CARGAR
-        elif p.distancia is Distancia.LEJOS:
-            preparar = TipoOperador.DESPLAZAR
-        else:
-            preparar = TipoOperador.ALEJAR
-    elif p.distancia is Distancia.CONTACTO:
-        # Golpear exige Cerca: salir de Contacto también recupera Neutral/Reposo.
-        preparar = TipoOperador.ALEJAR
-    elif p.postura is not Postura.NEUTRAL or p.acciones is Accion.ATACANDO:
-        preparar = TipoOperador.REPOSAR
-    elif p.distancia is Distancia.LEJOS:
-        preparar = TipoOperador.DESPLAZAR
-    elif p.distancia is Distancia.MEDIA:
-        preparar = TipoOperador.ACERCAR
-    elif p.medidor_super < 3:
-        preparar = TipoOperador.CARGAR
+    preferidos = [TipoOperador.ATERRIZAR, TipoOperador.CARGAR]
+    if p.distancia is Distancia.LEJOS:
+        preferidos += [TipoOperador.DESPLAZAR, TipoOperador.ACERCAR]
+    elif p.distancia in (Distancia.MEDIA, Distancia.CERCA):
+        preferidos += [TipoOperador.ACERCAR]
     else:
-        # El rival aún no es Vulnerable: preparar el golpe para su próximo turno.
-        preparar = TipoOperador.REPOSAR
-    return tuple(op for op in opciones if op.tipo is preparar) or opciones
-
+        preferidos += [TipoOperador.ALEJAR]
+    for tipo in preferidos:
+        preparacion = tuple(op for op in opciones if op.tipo is tipo)
+        if preparacion:
+            return preparacion
+    return opciones
 
 def evaluar(estado: Estado, perspectiva: Actor) -> float:
     if estado.terminado:
@@ -86,7 +71,7 @@ def evaluar(estado: Estado, perspectiva: Actor) -> float:
 
 
 def elegir_operador(estado: Estado, actor: Actor, profundidad: int = 3, limite_evaluaciones: int = 5,
-                   *, turnos_sin_dano: int = 0) -> DecisionIA:
+                   *, turnos_sin_dano: int = 0, permitir_inteligentes: bool = True) -> DecisionIA:
     """Recibe el estado al inicio del turno, igual que el futuro HUD.
 
     La profundidad cuenta jugadas e incluye la acción raíz. Las evaluaciones
@@ -94,8 +79,8 @@ def elegir_operador(estado: Estado, actor: Actor, profundidad: int = 3, limite_e
     Tras tres turnos sin daño limita las opciones raíz a ataques o preparación
     inmediata. Minimax sigue comparando sus respuestas y conserva la prioridad
     de los operadores inteligentes. El árbol descendiente mantiene sus opciones.
-    Entre dos Bison prepara especiales desde el inicio para no entrar en un
-    intercambio obligatorio y reversible de Drenar_Energia_Psycho en Cerca.
+    Entre dos Bison prepara golpes en Contacto desde el inicio para evitar
+    intercambios reversibles de Drenar_Energia_Psycho en Cerca.
     """
     if profundidad not in (2, 3):
         raise ValueError("Minimax admite profundidad 2 o 3")
@@ -103,14 +88,20 @@ def elegir_operador(estado: Estado, actor: Actor, profundidad: int = 3, limite_e
         raise ValueError("Se debe mostrar al menos una evaluación")
     if turnos_sin_dano < 0:
         raise ValueError("El contador de inactividad no puede ser negativo")
+    estado = iniciar_turno(estado, actor)
     nodos = 0
+
+    def opciones_para(s: Estado, turno: Actor) -> tuple[Operador, ...]:
+        if permitir_inteligentes:
+            return operadores_prioritarios(s, turno)
+        return tuple(op for op in operadores_validos(s, turno) if not op.prioridad)
 
     def minimax(s: Estado, turno: Actor, restante: int, alfa: float, beta: float) -> float:
         nonlocal nodos
         nodos += 1
         if restante == 0 or s.terminado:
             return evaluar(s, actor)
-        opciones = operadores_prioritarios(s, turno)
+        opciones = opciones_para(s, turno)
         if not opciones:
             return evaluar(s, actor)
         maximizar = turno is actor
@@ -129,7 +120,7 @@ def elegir_operador(estado: Estado, actor: Actor, profundidad: int = 3, limite_e
 
     espejo_psycho = estado.p1.nombre is Nombre.BISON and estado.p2.nombre is Nombre.BISON
     iniciativa = (turnos_sin_dano >= 3 or espejo_psycho) and not estado.terminado
-    opciones = opciones_con_iniciativa(estado, actor) if iniciativa else operadores_prioritarios(estado, actor)
+    opciones = opciones_con_iniciativa(estado, actor, permitir_inteligentes) if iniciativa else opciones_para(estado, actor)
     jugadas = [EvaluacionJugada(op, minimax(ejecutar_turno(estado, actor, op), actor.rival, profundidad - 1, -inf, inf))
                for op in opciones]
     jugadas.sort(key=lambda j: j.puntuacion, reverse=True)

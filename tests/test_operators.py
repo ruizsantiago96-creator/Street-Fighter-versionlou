@@ -59,7 +59,8 @@ def test_agarre() -> None:
     s = Operador(T.AGARRAR).aplicar(s, Actor.P1)
     assert s.p1.acciones is Accion.AGARRE
     assert s.p1.colision is Colision.VULNERABLE
-    assert s.p1.distancia is s.p2.distancia is Distancia.LEJOS
+    assert s.p1.distancia is s.p2.distancia is Distancia.CONTACTO
+    assert s.p1.recarga_energia == 1 and s.p2.acciones is Accion.DANO
     assert s.p2.puntos_salud == 850 and s.p2.dano_recibido == 1
 
 
@@ -95,7 +96,7 @@ def test_especial_exige_nombre_distancia_y_medidor(tipo: T, nombre: Nombre, dist
     assert not op.puede_aplicarse(replace(s, p1=replace(s.p1, distancia=otra), p2=replace(s.p2, distancia=otra)), Actor.P1)
 
 
-@pytest.mark.parametrize("salud,permitido", [(0, False), (1, True), (400, True), (401, False)])
+@pytest.mark.parametrize("salud,permitido", [(0, False), (10, True), (400, True), (450, True), (460, False)])
 def test_liberar_umbral(salud: int, permitido: bool) -> None:
     s = preparar(distancia=Distancia.CONTACTO)
     s = replace(s, p1=replace(s.p1, puntos_salud=salud, medidor_super=3, dano_recibido=1), p2=replace(s.p2, acciones=Accion.ATACANDO))
@@ -114,7 +115,10 @@ def test_liberar_umbral(salud: int, permitido: bool) -> None:
 @pytest.mark.parametrize("defensa", [False, True])
 def test_finta_conserva_medidor_segun_tabla(defensa: bool) -> None:
     s = preparar(Nombre.CAMMY, Distancia.MEDIA)
-    s = replace(s, p1=replace(s.p1, medidor_super=2), p2=replace(s.p2, postura=Postura.NEUTRAL if defensa else Postura.AGACHADA, acciones=Accion.DEFENDIENDO if defensa else Accion.REPOSO))
+    s = replace(s, p1=replace(s.p1, medidor_super=2), p2=replace(s.p2, postura=Postura.NEUTRAL, acciones=Accion.DEFENDIENDO if defensa else Accion.REPOSO))
+    if not defensa:
+        assert not Operador(T.FINTA).puede_aplicarse(s, Actor.P1)
+        return
     s = Operador(T.FINTA).aplicar(s, Actor.P1)
     assert s.p1.medidor_super == 2
     assert s.p1.postura is Postura.AEREO and s.p1.colision is Colision.INVENCIBLE
@@ -147,18 +151,16 @@ def test_lectura(distancia: Distancia) -> None:
     assert s.p2.colision is Colision.VULNERABLE
 
 
-def test_auxiliares_y_limite_carga() -> None:
-    s = crear_estado()
-    for nivel in (1, 2, 3):
-        s = Operador(T.CARGAR).aplicar(s, Actor.P1)
-        assert s.p1.medidor_super == nivel and s.p1.acciones is Accion.CARGANDO
+def test_carga_consume_permiso_y_necesita_accion_de_preparacion() -> None:
+    s = preparar()
     assert not Operador(T.CARGAR).puede_aplicarse(s, Actor.P1)
-    s = Operador(T.AGACHAR).aplicar(s, Actor.P1)
-    assert s.p1.postura is Postura.AGACHADA
-    s = Operador(T.GUARDIA).aplicar(s, Actor.P1)
-    assert s.p1.acciones is Accion.DEFENDIENDO
-    s = Operador(T.REPOSAR).aplicar(s, Actor.P1)
-    assert s.p1.postura is Postura.NEUTRAL and s.p1.acciones is Accion.REPOSO
+    s = Operador(T.GOLPEAR).aplicar(s, Actor.P1)
+    assert not Operador(T.CARGAR).puede_aplicarse(s, Actor.P1)  # Sigue Atacando.
+    s = Operador(T.ALEJAR).aplicar(s, Actor.P1)
+    s = Operador(T.CARGAR).aplicar(s, Actor.P1)
+    assert s.p1.medidor_super == 1 and s.p1.recarga_energia == 0
+    assert s.p1.acciones is Accion.CARGANDO
+    assert not Operador(T.CARGAR).puede_aplicarse(s, Actor.P1)
 
 
 @pytest.mark.parametrize("op", OPERADORES)
@@ -175,7 +177,7 @@ def test_dano_saturado_y_final_inmediato() -> None:
     s = preparar()
     s = replace(s, p2=replace(s.p2, puntos_salud=30))
     s = ejecutar_turno(s, Actor.P1, Operador(T.GOLPEAR))
-    assert s.p2.puntos_salud == 0 and s.p2.postura is Postura.FINAL
+    assert s.p2.puntos_salud == 0 and s.p2.postura is Postura.NEUTRAL
     assert s.ganador is Actor.P1
     assert operadores_validos(s, Actor.P1) == ()
 
@@ -201,6 +203,6 @@ def test_prioridad_inteligente() -> None:
 @pytest.mark.parametrize("distancia", Distancia)
 def test_golpear_conserva_distancia_original(distancia: Distancia) -> None:
     s = preparar(distancia=distancia)
-    assert Operador(T.GOLPEAR).puede_aplicarse(s, Actor.P1) is (distancia is Distancia.CERCA)
+    assert Operador(T.GOLPEAR).puede_aplicarse(s, Actor.P1) is (distancia in (Distancia.CERCA, Distancia.CONTACTO))
 
 

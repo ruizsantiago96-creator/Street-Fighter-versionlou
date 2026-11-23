@@ -1,14 +1,17 @@
-"""Arena geométrica y luchadores originales dibujados sin recursos externos."""
+"""Arena estilizada, sprites arcade y coreografías sincronizadas con el EEO."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import cos, exp, pi, sin
 
 import pygame
 
 from engine.models import Accion, Actor, Colision, Distancia, Estado, Hora, Lugar, Nombre, Personaje, Postura, Vista
-from engine.operators import ESPECIALES, Operador
+from engine.operators import ESPECIALES, Operador, TipoOperador as T
+from ui.animations import (COREOGRAFIAS, DURACION, Estilo, Fotograma, Pose,
+                           fotograma, reaccion_receptor, suave)
 from ui.hud import AZUL, ORO, ROJO, TENUE, TEXTO, fuente, texto
+from ui.sprites import dibujar_sprite
 
 ARENA = pygame.Rect(16, 144, 908, 352)
 SEPARACION = {Distancia.LEJOS: 282.0, Distancia.MEDIA: 190.0, Distancia.CERCA: 110.0, Distancia.CONTACTO: 52.0}
@@ -16,29 +19,37 @@ SEPARACION = {Distancia.LEJOS: 282.0, Distancia.MEDIA: 190.0, Distancia.CERCA: 1
 
 def dibujar_personaje(s: pygame.Surface, p: Personaje, x: float, suelo: float,
                       tiempo: float = 0, escala: float = 1, golpe: bool = False,
-                      ataque: float = 0) -> None:
-    """Figura articulada: coordenadas relativas a los pies, orientación del modelo."""
+                      ataque: float = 0, pose: Pose | None = None) -> None:
+    """Sprite arcade con respaldo geométrico si falta un recurso local."""
+    if dibujar_sprite(s, p, x, suelo, tiempo, escala, golpe, pose):
+        return
     direccion = 1 if p.vista is Vista.DERECHA else -1
     base, detalle, acento = p.color
     borde = (9, 13, 23)
     piel = (228, 186, 153)
     if golpe:
         base, detalle, acento, piel = (255, 241, 235), ROJO, (255, 255, 255), (255, 220, 220)
-    if p.postura is Postura.FINAL:
+    animada = pose is not None
+    pose = pose or Pose(extension=ataque, avance=ataque * 17)
+    if p.puntos_salud == 0 and (not animada or pose.caida >= 1):
         pygame.draw.ellipse(s, (12, 15, 23), (int(x - 78 * escala), int(suelo - 4 * escala), int(156 * escala), max(1, int(14 * escala))))
         pygame.draw.line(s, borde, (int(x - 58 * escala), int(suelo - 12 * escala)), (int(x + 43 * escala), int(suelo - 12 * escala)), max(1, int(30 * escala)))
         pygame.draw.line(s, base, (int(x - 58 * escala), int(suelo - 14 * escala)), (int(x + 43 * escala), int(suelo - 14 * escala)), max(1, int(22 * escala)))
         pygame.draw.circle(s, piel, (int(x + 62 * escala), int(suelo - 15 * escala)), max(1, int(15 * escala)))
         return
-    agachada = p.postura is Postura.AGACHADA
-    altura = 0.70 if agachada else 1.0
-    aire = 62 + sin(tiempo * 5) * 7 if p.postura is Postura.AEREO else 0
+    altura = 1.0
+    aire = pose.elevacion if pose.elevacion is not None else (62 + sin(tiempo * 5) * 7 if p.postura is Postura.AEREO else 0)
     respiracion = sin(tiempo * 3.2) * 2
     y = suelo - aire + respiracion
-    x += ataque * direccion * 17
+    x += pose.avance * direccion
+    angulo = (pose.giro + pose.inclinacion) * pi / 180
 
     def punto(a: float, b: float) -> tuple[int, int]:
-        return round(x + a * escala * direccion), round(y + b * escala * altura)
+        # Rota la figura articulada alrededor de la cadera, no del escenario.
+        local_y = b + 70
+        rot_x = a * cos(angulo) - local_y * sin(angulo)
+        rot_y = a * sin(angulo) + local_y * cos(angulo) - 70
+        return round(x + rot_x * escala * direccion), round(y + rot_y * escala * altura)
 
     def miembro(a: tuple[float, float], b: tuple[float, float], color: tuple[int, int, int], grosor: int) -> None:
         pygame.draw.line(s, borde, punto(*a), punto(*b), max(1, round((grosor + 5) * escala)))
@@ -52,10 +63,17 @@ def dibujar_personaje(s: pygame.Surface, p: Personaje, x: float, suelo: float,
         pygame.draw.ellipse(s, color, aura, max(1, round(2 * escala)))
         pygame.draw.arc(s, color, aura.inflate(12, 8), -1.2 + tiempo, 1.0 + tiempo, max(1, round(3 * escala)))
     piernas = base if p.nombre is Nombre.MAKOTO else acento
-    miembro((-11, -62), (-27, -8), piernas, 18)
-    miembro((11, -62), (32, -8), piernas, 18)
-    miembro((-28, -6), (-13, -6), detalle if p.nombre is Nombre.BISON else acento, 12)
-    miembro((29, -6), (44, -6), detalle if p.nombre is Nombre.BISON else acento, 12)
+    paso = pose.zancada * 30
+    pie_trasero = (-27 - paso, -8 - max(0, paso) * 0.35)
+    pie_delantero = (32 + paso + pose.patada * 47, -8 - pose.patada * 100 - max(0, -paso) * 0.35)
+    miembro((-11, -62), (-22 - paso * 0.5, -36), piernas, 18)
+    miembro((-22 - paso * 0.5, -36), pie_trasero, piernas, 16)
+    rodilla = (25 + paso * 0.5 + pose.patada * 21, -36 - pose.patada * 50)
+    miembro((11, -62), rodilla, piernas, 18)
+    miembro(rodilla, pie_delantero, piernas, 16)
+    zapato = detalle if p.nombre is Nombre.BISON else acento
+    miembro(pie_trasero, (pie_trasero[0] + 15, pie_trasero[1]), zapato, 12)
+    miembro(pie_delantero, (pie_delantero[0] + 15, pie_delantero[1]), zapato, 12)
     torso = [punto(-24, -125), punto(20, -125), punto(17, -65), punto(-17, -65)]
     pygame.draw.polygon(s, borde, torso)
     pygame.draw.polygon(s, base, [punto(-21, -122), punto(17, -122), punto(14, -68), punto(-14, -68)])
@@ -68,13 +86,22 @@ def dibujar_personaje(s: pygame.Surface, p: Personaje, x: float, suelo: float,
         miembro((13, -121), (25, -121), detalle, 12)
     else:
         miembro((-12, -117), (-10, -91), detalle, 3)
-    defensa = p.acciones is Accion.DEFENDIENDO
-    miembro((-21, -115), (-34, -86), base, 13)
-    miembro((-34, -86), (-19, -97), detalle, 12)
-    codo = (35.0 + ataque * 15, -110.0 - ataque * 3)
-    mano = (23.0 + ataque * 68, -133.0 + ataque * 20)
-    if defensa:
-        codo, mano = (29, -116), (23, -148)
+    defensa = max(pose.guardia, 1.0 if p.acciones is Accion.DEFENDIENDO else 0.0)
+    codo_trasero = (-34 + pose.agarre * 47, -86 - pose.agarre * 24)
+    mano_trasera = (-19 + pose.agarre * 70, -97 - pose.agarre * 22)
+    miembro((-21, -115), codo_trasero, base, 13)
+    miembro(codo_trasero, mano_trasera, detalle, 12)
+    codo = (35.0 + pose.extension * 15, -110.0 - pose.extension * 3)
+    mano = (23.0 + pose.extension * 68, -133.0 + pose.extension * 20)
+    if defensa > 0:
+        mano = (mano[0] * (1 - defensa) + 23 * defensa, mano[1] * (1 - defensa) - 148 * defensa)
+    if pose.agarre:
+        codo, mano = (40, -110), (23 + pose.agarre * 53, -122)
+    if pose.uppercut:
+        codo = (35, -110 - pose.uppercut * 20)
+        mano = (23 + pose.uppercut * 17, -133 - pose.uppercut * 67)
+    if pose.carga:
+        mano = (34, -110 - pose.carga * 12)
     miembro((20, -116), codo, base, 13)
     miembro(codo, mano, detalle, 13)
     pygame.draw.circle(s, borde, punto(0, -145), max(1, round(21 * escala)))
@@ -101,6 +128,103 @@ class Impacto:
     actor: Actor
     operador: Operador
     instante: int
+    posiciones: tuple[float, float]
+
+
+def dibujar_efectos(s: pygame.Surface, tipo: T, f: Fotograma, x: float,
+                    rival_x: float, edad: int, dano: int) -> None:
+    """Efectos deterministas por movimiento, sincronizados con su contacto."""
+    if not 0 <= edad < DURACION:
+        return
+    c = COREOGRAFIAS[tipo]
+    e, color = c.estilo, c.color
+    direccion = 1 if rival_x >= x else -1
+    elevacion = f.pose.elevacion or 0
+    centro = (round(x), round(190 - elevacion))
+    capa = pygame.Surface(s.get_size(), pygame.SRCALPHA)
+    pulso = sin(pi * f.progreso)
+    if e in (Estilo.DASH, Estilo.PASO, Estilo.RETIRADA):
+        for i in range(7):
+            y = 178 + i * 15
+            inicio = round(x - direccion * (55 + i * 5))
+            pygame.draw.line(capa, (*color, round(150 * pulso)), (inicio, y), (inicio - direccion * 32, y), 2)
+    elif e is Estilo.ESCUDO:
+        cx = round(x + direccion * 48)
+        vertices = [(cx, 133), (cx + 27, 150), (cx + 27, 211), (cx, 231), (cx - 27, 211), (cx - 27, 150)]
+        pygame.draw.polygon(capa, (*color, 55 + round(45 * pulso)), vertices)
+        pygame.draw.polygon(capa, (*color, 230), vertices, 3)
+        pygame.draw.line(capa, (*color, 230), (cx, 145), (cx, 216), 2)
+    elif e in (Estilo.CARGA, Estilo.DRENAJE):
+        pygame.draw.ellipse(capa, (*color, 130), (round(x - 47), 273, 94, 17), 3)
+        for i in range(18):
+            fase = (f.progreso * 2 + i / 18) % 1
+            if e is Estilo.DRENAJE:
+                px = rival_x + (x - rival_x) * fase
+                py = 183 + sin(fase * pi * 3 + i) * 18
+            else:
+                px = x + sin(i * 2.4 + f.progreso * 7) * (20 + 18 * fase)
+                py = 278 - fase * 140
+            pygame.draw.circle(capa, (*color, 190), (round(px), round(py)), 2 + i % 3)
+        pygame.draw.circle(capa, (*color, 50), centro, round(24 + pulso * 20))
+        pygame.draw.circle(capa, (*color, 215), centro, round(16 + pulso * 10), 2)
+    elif e in (Estilo.GIRO, Estilo.LIBERACION, Estilo.FINTA):
+        radio = 48 + round(18 * pulso)
+        aro = pygame.Rect(centro[0] - radio, centro[1] - radio, radio * 2, radio * 2)
+        for i in range(3):
+            angulo = f.progreso * pi * 5 + i * 2 * pi / 3
+            pygame.draw.arc(capa, (*color, 230 - i * 45), aro.inflate(i * 10, i * 10), angulo, angulo + 1.6, 4)
+        if e is Estilo.LIBERACION and f.impacto:
+            radio = 30 + round((1 - f.reaccion) * 140)
+            pygame.draw.circle(capa, (*color, round(180 * f.reaccion)), centro, radio, 4)
+            for i in range(10):
+                angulo = i * pi / 5
+                px, py = centro[0] + cos(angulo) * radio, centro[1] + sin(angulo) * radio
+                pygame.draw.line(capa, (*color, 210), (round(px), round(py)),
+                                 (round(px + cos(angulo) * 12), round(py + sin(angulo) * 12)), 3)
+    elif e is Estilo.CRUSHER:
+        for i in range(9):
+            fase = f.progreso * pi * 8 + i * 0.7
+            px = x - direccion * (i * 13 + 15)
+            py = 188 - elevacion + sin(fase) * 35
+            pygame.draw.circle(capa, (*color, 200 - i * 17), (round(px), round(py)), 13 - i)
+        pygame.draw.ellipse(capa, (*color, 170), (round(x - 80), round(146 - elevacion), 160, 82), 4)
+    elif e is Estilo.PATADA:
+        for i in range(5):
+            pygame.draw.line(capa, (*color, 190 - i * 25),
+                             (round(x - direccion * (30 + i * 13)), round(175 - elevacion + i * 9)),
+                             (round(x - direccion * (90 + i * 13)), round(188 - elevacion + i * 9)), 3)
+    elif e in (Estilo.RAFAGA, Estilo.PARRY):
+        alcance = 50 + 55 * f.pose.extension
+        for i in range(4):
+            px = x + direccion * (alcance - i * 12)
+            py = 151 - (i * 14 if e is Estilo.RAFAGA else -i * 7)
+            pygame.draw.circle(capa, (*color, 150 - i * 22), (round(px), round(py)), 12 - i)
+        if e is Estilo.PARRY:
+            aro = pygame.Rect(round(x + direccion * 30) - 35, 130, 70, 104)
+            pygame.draw.arc(capa, (*color, 220), aro, -1.5, 1.5, 4)
+    if e in (Estilo.SALTO, Estilo.ATERRIZAJE, Estilo.AGARRE):
+        for i in range(9):
+            dispersion = 12 + f.progreso * 65
+            px = x + (i - 4) * dispersion / 4
+            py = 284 - sin(pi * f.progreso) * (7 + i % 3 * 4)
+            pygame.draw.circle(capa, (*color, round(150 * (1 - f.progreso))), (round(px), round(py)), 3 + i % 3)
+    if f.impacto and dano > 0 and f.reaccion > 0:
+        golpe_x, golpe_y = round(rival_x), 178
+        radio = 12 + (1 - f.reaccion) * 30
+        vertices = []
+        for i in range(16):
+            angulo = i * pi / 8
+            r = radio if i % 2 else radio * 0.38
+            vertices.append((round(golpe_x + cos(angulo) * r), round(golpe_y + sin(angulo) * r)))
+        pygame.draw.polygon(capa, (*color, round(240 * f.reaccion)), vertices)
+        pygame.draw.circle(capa, (255, 255, 240, round(240 * f.reaccion)), (golpe_x, golpe_y), max(2, round(8 * f.reaccion)))
+        for i in range(12):
+            angulo = i * pi / 6
+            recorrido = radio + (1 - f.reaccion) * 45
+            px, py = golpe_x + cos(angulo) * recorrido, golpe_y + sin(angulo) * recorrido
+            pygame.draw.line(capa, (*color, round(220 * f.reaccion)), (round(px), round(py)),
+                             (round(px + cos(angulo) * 9), round(py + sin(angulo) * 9)), 2)
+    s.blit(capa, (0, 0))
 
 
 class Renderer:
@@ -111,7 +235,8 @@ class Renderer:
         self.fondos: dict[tuple[Hora, Lugar], pygame.Surface] = {}
 
     def registrar(self, antes: Estado, despues: Estado, actor: Actor, op: Operador, ahora: int) -> None:
-        self.impacto = Impacto(antes, despues, actor, op, ahora)
+        self.impacto = Impacto(antes, despues, actor, op, ahora,
+                               (self.posiciones[Actor.P1], self.posiciones[Actor.P2]))
 
     def actualizar(self, estado: Estado, dt: float) -> None:
         separacion = SEPARACION[estado.p1.distancia]
@@ -197,51 +322,97 @@ class Renderer:
 
     def dibujar(self, pantalla: pygame.Surface, estado: Estado, ahora: int) -> None:
         s = self.fondo(estado).copy()
-        t = ahora / 1000
         evento = self.impacto
         edad = ahora - evento.instante if evento else 10_000
-        visual = evento.despues if evento and edad < 600 else estado
-        if evento and evento.operador.prioridad and edad < 420:
+        activo = evento is not None and 0 <= edad < DURACION
+        frame = fotograma(evento.operador.tipo, edad) if evento and activo else None
+        t = (evento.instante + frame.tiempo) / 1000 if evento and frame else ahora / 1000
+        visual = evento.despues if evento and activo else estado
+        ubicaciones = dict(self.posiciones)
+        if evento and frame:
+            separacion = SEPARACION[evento.despues.p1.distancia]
+            for i, actor in enumerate(Actor):
+                destino = 454 + (-separacion if actor is Actor.P1 else separacion)
+                ubicaciones[actor] = evento.posiciones[i] + (destino - evento.posiciones[i]) * frame.llegada
+        dano_rival = (evento.antes.personaje(evento.actor.rival).puntos_salud
+                      - evento.despues.personaje(evento.actor.rival).puntos_salud) if evento else 0
+        if evento and evento.operador.prioridad and 0 <= edad < 420:
             flash = pygame.Surface(ARENA.size, pygame.SRCALPHA)
-            flash.fill((240, 27, 52, round(100 * (1 - edad / 420))))
+            flash.fill((240, 27, 52, round(75 * (1 - edad / 420))))
             s.blit(flash, (0, 0))
         for actor in Actor:
             p = visual.personaje(actor)
             dano = evento.antes.personaje(actor).puntos_salud - evento.despues.personaje(actor).puntos_salud if evento else 0
-            ataque = max(0.0, sin(pi * edad / 420)) if evento and actor is evento.actor and edad < 420 and p.acciones in (Accion.ATACANDO, Accion.AGARRE) else 0.0
-            x = self.posiciones[actor]
-            dibujar_personaje(s, p, x, 287, t, golpe=dano > 0 and edad < 380 and edad // 70 % 2 == 0, ataque=ataque)
-            if dano > 0 and edad < 950:
+            pose: Pose | None = None
+            if evento and frame:
+                if not frame.impacto:
+                    p = evento.antes.personaje(actor)
+                if actor is evento.actor:
+                    pose = frame.pose
+                    if dano_rival > 0:
+                        alcance = max(0.0, abs(ubicaciones[actor] - ubicaciones[actor.rival]) - 112)
+                        intensidad = max(pose.extension, pose.patada, pose.agarre, pose.uppercut)
+                        pose = replace(pose, avance=pose.avance + alcance * intensidad)
+                elif dano > 0 and frame.impacto:
+                    pose = reaccion_receptor(frame, evento.operador.tipo, p.puntos_salud == 0,
+                                              evento.antes.personaje(actor).postura is Postura.AEREO)
+            x = ubicaciones[actor]
+            if evento and frame and actor is evento.actor and COREOGRAFIAS[evento.operador.tipo].estilo in (
+                    Estilo.DASH, Estilo.GIRO, Estilo.LIBERACION, Estilo.FINTA, Estilo.CRUSHER, Estilo.PATADA):
+                direccion = 1 if p.vista is Vista.DERECHA else -1
+                for i in (3, 2, 1):
+                    estela = pygame.Surface(ARENA.size, pygame.SRCALPHA)
+                    dibujar_personaje(estela, p, x - direccion * i * 19, 287, t, pose=pose)
+                    estela.set_alpha(85 - i * 20)
+                    s.blit(estela, (0, 0))
+            reaccion = frame.reaccion if frame and frame.impacto else 0
+            flash_impacto = bool(frame and dano > 0 and reaccion > 0.2 and (int(frame.tiempo) // 65) % 2 == 1)
+            dibujar_personaje(s, p, x, 287, t, pose=pose, golpe=flash_impacto)
+            desde_impacto = edad - COREOGRAFIAS[evento.operador.tipo].impacto if evento else 10_000
+            if dano > 0 and 0 <= desde_impacto < 650:
                 valor = fuente(28, True).render(f"−{dano}", True, ROJO if dano >= 250 else TEXTO)
-                valor.set_alpha(round(255 * max(0, 1 - edad / 950)))
-                s.blit(valor, (int(x - 30), int(108 - edad * 0.04)))
-                if edad < 260:
-                    for i in range(8):
-                        angulo = i * pi / 4
-                        radio = 13 + edad * 0.07
-                        pygame.draw.line(s, ORO, (round(x + cos(angulo) * radio), round(198 + sin(angulo) * radio)), (round(x + cos(angulo) * (radio + 13)), round(198 + sin(angulo) * (radio + 13))), 3)
+                valor.set_alpha(round(255 * max(0, 1 - desde_impacto / 650)))
+                s.blit(valor, (int(x - 30), int(122 - desde_impacto * 0.045)))
+        if evento and frame:
+            tipo = evento.operador.tipo
+            dibujar_efectos(s, tipo, frame, ubicaciones[evento.actor],
+                           ubicaciones[evento.actor.rival], edad, dano_rival)
+            if dano_rival > 0 and frame.impacto and edad < COREOGRAFIAS[tipo].impacto + 180:
+                fuerza = COREOGRAFIAS[tipo].fuerza * frame.reaccion * 3
+                s.scroll(round(sin(edad * 0.15) * fuerza), round(cos(edad * 0.19) * fuerza * 0.6))
+            fase = "IMPACTO" if frame.congelado else "RECUPERACIÓN" if frame.impacto else "PREPARACIÓN"
+            if tipo is T.CARGAR:
+                fase = "CANALIZANDO ENERGÍA"
+            elif tipo in (T.DESPLAZAR, T.ACERCAR, T.ALEJAR):
+                fase = "DESPLAZAMIENTO"
+            elif tipo is T.BLOQUEAR:
+                fase = "GUARDIA"
+            pygame.draw.rect(s, (12, 19, 30), (8, 321, 350, 25), border_radius=4)
+            texto(s, f"{evento.operador.nombre.replace('_', ' ')} / {fase}", (15, 325),
+                  12, COREOGRAFIAS[tipo].color, True, ancho=336)
         pygame.draw.rect(s, (12, 19, 30), (0, 0, 908, 29))
         texto(s, f"{estado.escenario.lugar.value} / {estado.escenario.hora.value}", (12, 5), 13, TENUE)
         texto(s, f"DISTANCIA: {estado.p1.distancia.value.upper()}", (682, 5), 13, ORO)
-        if evento and (evento.operador.prioridad or evento.operador.tipo in ESPECIALES) and edad < 1100:
+        if evento and (evento.operador.prioridad or evento.operador.tipo in ESPECIALES) and 0 <= edad < 1100:
             color_banner = (111, 26, 46) if evento.operador.prioridad else (91, 66, 26)
-            pygame.draw.rect(s, color_banner, (90, 38, 728, 76), border_radius=5)
+            # Esquina superior: deja libre el centro para giros y saltos.
+            pygame.draw.rect(s, color_banner, (8, 35, 350, 69), border_radius=5)
             acento = ROJO if evento.operador.prioridad else ORO
-            pygame.draw.rect(s, acento, (90, 38, 728, 76), 2, border_radius=5)
-            pygame.draw.circle(s, acento, (117, 76), 17)
-            icono = fuente(19, True).render("I" if evento.operador.prioridad else "N", True, (12, 19, 30))
-            s.blit(icono, icono.get_rect(center=(117, 76)))
-            categoria = "OPERADOR INTELIGENTE / REACCIÓN CONDICIONAL" if evento.operador.prioridad else "PODER NORMAL / ESPECIAL / CONSUME 3 DE SUPER"
-            etiqueta = fuente(12, True).render(categoria, True, acento)
-            s.blit(etiqueta, etiqueta.get_rect(center=(454, 50)))
+            pygame.draw.rect(s, acento, (8, 35, 350, 69), 2, border_radius=5)
+            pygame.draw.circle(s, acento, (27, 67), 12)
+            icono = fuente(15, True).render("I" if evento.operador.prioridad else "N", True, (12, 19, 30))
+            s.blit(icono, icono.get_rect(center=(27, 67)))
+            categoria = "INTELIGENTE / REACCIÓN CONDICIONAL" if evento.operador.prioridad else "PODER NORMAL / CONSUME 3 SUPER"
+            etiqueta = fuente(10, True).render(categoria, True, acento)
+            s.blit(etiqueta, etiqueta.get_rect(center=(198, 46)))
             nombre = "¡" + evento.operador.nombre.replace("_", " ").upper() + "!"
-            imagen = fuente(21, True).render(nombre, True, TEXTO)
-            s.blit(imagen, imagen.get_rect(center=(454, 74)))
+            imagen = fuente(15, True).render(nombre, True, TEXTO)
+            s.blit(imagen, imagen.get_rect(center=(198, 63)))
             super_antes = evento.antes.personaje(evento.actor).medidor_super
             super_despues = evento.despues.personaje(evento.actor).medidor_super
             diferencia = super_despues - super_antes
             efecto = f"CONSUME {abs(diferencia)}" if diferencia < 0 else f"GANA {diferencia}" if diferencia > 0 else "SIN CONSUMO SEGÚN TABLA EEO"
-            detalle = fuente(13, True).render(f"{evento.actor.value.upper()} / SUPER {super_antes} → {super_despues} / {efecto}", True, acento)
-            s.blit(detalle, detalle.get_rect(center=(454, 101)))
+            detalle = fuente(11, True).render(f"{evento.actor.value.upper()} / SUPER {super_antes} → {super_despues} / {efecto}", True, acento)
+            s.blit(detalle, detalle.get_rect(center=(183, 86)))
         pygame.draw.rect(s, (49, 62, 80), s.get_rect(), 1, border_radius=8)
         pantalla.blit(s, ARENA)

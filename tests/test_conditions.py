@@ -13,10 +13,10 @@ def test_explicacion_coincide_con_precondiciones_del_motor() -> None:
         distancia = rng.choice(list(Distancia))
         for actor in Actor:
             p = replace(s.personaje(actor), distancia=distancia,
-                        puntos_salud=rng.choice((0, 1, 400, 401, 1000)),
+                        puntos_salud=rng.choice((0, 10, 400, 450, 460, 1000)),
                         postura=rng.choice(list(Postura)), acciones=rng.choice(list(Accion)),
                         colision=rng.choice(list(Colision)), medidor_super=rng.randrange(4),
-                        especial=rng.choice(list(Especial)))
+                        especial=rng.choice(list(Especial)), recarga_energia=rng.randrange(2))
             r = replace(s.personaje(actor.rival), distancia=distancia)
             s = s.con_personajes(actor, p, r)
         for actor in Actor:

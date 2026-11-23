@@ -9,12 +9,14 @@ from enum import Enum
 import pygame
 
 from engine.ai import DecisionIA, elegir_operador
+from engine.exhibition import elegir_exposicion
 from engine.models import Actor, Hora, Lugar, Nombre, Vista, crear_estado, crear_personaje, iniciar_turno
 from engine.operators import ESPECIALES, Operador
 from ui.hud import (AZUL, BORDE, ESPECIAL_PERSONAJE, FONDO, ORO, PANEL, ROJO,
                     TENUE, TEXTO, VERDE, Boton, EntradaLog, HUD, fuente, panel,
                     lineas, parrafo, texto, tooltip)
 from ui.renderer import Renderer, dibujar_personaje
+from ui.animations import DURACION
 from ui.details import DetalleMovimiento
 
 
@@ -31,6 +33,7 @@ class Configuracion:
     hora: Hora = Hora.TARDE
     modo: Modo = Modo.JUGADOR_IA
     profundidad: int = 3
+    exposicion: bool = True
 
     def __post_init__(self) -> None:
         if self.profundidad not in (2, 3):
@@ -49,19 +52,21 @@ class Seleccion:
                 botones.append(Boton(pygame.Rect(x0 + i * 150, 149, 142, 161), nombre.value,
                                      f"{actor.value}:{nombre.value}", AZUL if actor is Actor.P1 else ROJO,
                                      seleccionado=elegido is nombre))
-        for i, lugar in enumerate(Lugar):
-            botones.append(Boton(pygame.Rect(24 + i * 249, 360, 237, 66), lugar.value,
-                                 f"lugar:{lugar.value}", AZUL, seleccionado=self.config.lugar is lugar))
         for i, hora in enumerate(Hora):
-            botones.append(Boton(pygame.Rect(24 + i * 142, 484, 130, 42), hora.value,
+            botones.append(Boton(pygame.Rect(24 + i * 142, 379, 130, 42), hora.value,
                                  f"hora:{hora.value}", ORO, seleccionado=self.config.hora is hora))
         for i, modo in enumerate(Modo):
-            botones.append(Boton(pygame.Rect(490 + i * 215, 484, 203, 42), modo.value,
+            botones.append(Boton(pygame.Rect(490 + i * 215, 379, 203, 42), modo.value,
                                  f"modo:{modo.value}", VERDE, seleccionado=self.config.modo is modo))
         for i, profundidad in enumerate((2, 3)):
-            botones.append(Boton(pygame.Rect(956 + i * 150, 484, 138, 42), f"Nivel {profundidad}",
+            botones.append(Boton(pygame.Rect(956 + i * 150, 379, 138, 42), f"Nivel {profundidad}",
                                  f"profundidad:{profundidad}", ROJO, seleccionado=self.config.profundidad == profundidad))
-        botones.append(Boton(pygame.Rect(866, 590, 384, 72), "INICIAR COMBATE  →", "iniciar", ORO, seleccionado=True))
+        for i, (etiqueta, valor) in enumerate((("Exposición: ambos inteligentes", True), ("Competitivo: Minimax", False))):
+            botones.append(Boton(pygame.Rect(24 + i * 405, 434, 393, 32), etiqueta,
+                                 f"exposicion:{int(valor)}", AZUL,
+                                 habilitado=self.config.modo is Modo.IA_IA,
+                                 seleccionado=self.config.exposicion is valor))
+        botones.append(Boton(pygame.Rect(866, 496, 384, 72), "INICIAR COMBATE  →", "iniciar", ORO, seleccionado=True))
         return botones
 
     def evento(self, evento: pygame.event.Event) -> bool:
@@ -79,14 +84,14 @@ class Seleccion:
                 self.config = replace(self.config, p1=Nombre(valor))
             elif campo == "p2":
                 self.config = replace(self.config, p2=Nombre(valor))
-            elif campo == "lugar":
-                self.config = replace(self.config, lugar=Lugar(valor))
             elif campo == "hora":
                 self.config = replace(self.config, hora=Hora(valor))
             elif campo == "modo":
                 self.config = replace(self.config, modo=Modo(valor))
             elif campo == "profundidad":
                 self.config = replace(self.config, profundidad=int(valor))
+            elif campo == "exposicion":
+                self.config = replace(self.config, exposicion=bool(int(valor)))
         return False
 
     def dibujar(self, s: pygame.Surface, ahora: int, mouse: tuple[int, int]) -> None:
@@ -112,19 +117,16 @@ class Seleccion:
                 poder = ESPECIAL_PERSONAJE[p.nombre].value
                 for j, fila in enumerate(lineas(poder, 126, 12)):
                     texto(s, fila, (boton.rect.x + 9, boton.rect.y + 124 + j * 15), 12, TENUE)
-            elif boton.clave.startswith("lugar:"):
-                panel(s, boton.rect)
-                pygame.draw.rect(s, AZUL if boton.seleccionado else BORDE, boton.rect, 2 if boton.seleccionado else 1, border_radius=8)
-                parrafo(s, boton.etiqueta, (boton.rect.x + 12, boton.rect.y + 11), 214, 16, AZUL if boton.seleccionado else TENUE)
             else:
                 boton.dibujar(s, mouse)
-        texto(s, "03 / ESCENARIO", (24, 333), 14, AZUL, True)
-        texto(s, "04 / ILUMINACIÓN", (24, 453), 14, ORO, True)
-        texto(s, "05 / MODO DE COMBATE", (490, 453), 14, VERDE, True)
-        texto(s, "06 / MINIMAX", (956, 453), 14, ROJO, True)
-        panel(s, pygame.Rect(24, 569, 801, 108))
-        texto(s, "UN LABORATORIO DE DECISIONES", (42, 586), 17, ORO, True)
-        parrafo(s, "Observa la tupla EEO, inspecciona las condiciones de cada operador y compara las evaluaciones de Minimax. En IA vs IA puedes pausar y avanzar un turno a la vez.", (42, 616), 755, 16)
+        texto(s, "03 / ILUMINACIÓN", (24, 348), 14, ORO, True)
+        texto(s, "04 / MODO DE COMBATE", (490, 348), 14, VERDE, True)
+        texto(s, "05 / MINIMAX", (956, 348), 14, ROJO, True)
+        panel(s, pygame.Rect(24, 474, 801, 108))
+        texto(s, "UN LABORATORIO DE DECISIONES", (42, 491), 17, ORO, True)
+        parrafo(s, "Exposición prepara las condiciones legales de ambos inteligentes antes del K.O. Competitivo usa Minimax para ganar. En IA vs IA puedes pausar y avanzar paso a paso.", (42, 521), 755, 16)
+        texto(s, "ESCENARIO ALEATORIO", (24, 620), 14, AZUL, True)
+        texto(s, "El lugar se sortea al iniciar cada combate y cada revancha.", (246, 618), 17, TENUE)
         texto(s, "1280 × 720  /  60 FPS  /  PYTHON + PYGAME", (24, 693), 11, TENUE)
         texto(s, "ENTER: iniciar   ·   ESC: salir", (1018, 693), 12, TENUE)
 
@@ -197,7 +199,7 @@ class Combate:
         self.hud.scroll = 0
         self.turno = siguiente_actor
         self.estado = normalizado
-        self.animacion_hasta = ahora + 600
+        self.animacion_hasta = ahora + DURACION
         self.siguiente_ia = ahora + (1200 if self.config.modo is Modo.IA_IA else 700)
         self.restante_pausa = 1200
         if self.estado.terminado:
@@ -213,8 +215,13 @@ class Combate:
         if ahora < limite:
             return
         if self.futuro is None:
-            self.futuro = self.ejecutor.submit(elegir_operador, self.estado, self.turno, self.config.profundidad,
-                                              turnos_sin_dano=self.turnos_sin_dano)
+            if self.config.modo is Modo.IA_IA and self.config.exposicion:
+                self.futuro = self.ejecutor.submit(elegir_exposicion, self.estado, self.turno,
+                                                  self.config.profundidad, len(self.log),
+                                                  turnos_sin_dano=self.turnos_sin_dano)
+            else:
+                self.futuro = self.ejecutor.submit(elegir_operador, self.estado, self.turno, self.config.profundidad,
+                                                  turnos_sin_dano=self.turnos_sin_dano)
         if self.futuro.done():
             try:
                 decision = self.futuro.result()
@@ -427,12 +434,14 @@ class Combate:
         elif self.pausado:
             estado_turno = "PAUSA / → para un turno" if not self.paso_pendiente else "Procesando un paso…"
         elif self.futuro is not None:
-            estado_turno = f"{self.turno.value.upper()} / Minimax pensando…"
+            estado_turno = f"{self.turno.value.upper()} / CPU calculando…"
         elif self.es_cpu:
             estado_turno = f"{self.turno.value.upper()} / CPU en {max(0, self.siguiente_ia - ahora) / 1000:.1f} s"
         else:
             estado_turno = "P1 / Elige tu próximo operador"
-        self.hud.inspector(s, self.estado, self.log, self.ultima_decision, self.ultimo_actor_ia, estado_turno, self.config.profundidad)
+        objetivos = tuple(any(e.actor is a and e.operador.prioridad for e in self.log) for a in Actor)
+        self.hud.inspector(s, self.estado, self.log, self.ultima_decision, self.ultimo_actor_ia, estado_turno,
+                           self.config.profundidad, objetivos if self.config.modo is Modo.IA_IA and self.config.exposicion else None)
         for boton in self.botones_transporte():
             boton.dibujar(s, mouse)
         self.hud.leyenda_poderes(s)

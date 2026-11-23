@@ -103,7 +103,7 @@ def test_partidas_completas_llegan_a_ko(p1: Nombre, p2: Nombre, profundidad: int
     print(f"{p1.value} vs {p2.value}, nivel {profundidad}: primer daño turno {primer_golpe}, KO turno {turno + 1}")
 
 
-@pytest.mark.parametrize("distancia,tipo", [(Distancia.LEJOS, T.DESPLAZAR), (Distancia.MEDIA, T.ACERCAR), (Distancia.CERCA, T.GOLPEAR), (Distancia.CONTACTO, T.ALEJAR)])
+@pytest.mark.parametrize("distancia,tipo", [(Distancia.LEJOS, T.DESPLAZAR), (Distancia.MEDIA, T.ACERCAR), (Distancia.CERCA, T.GOLPEAR), (Distancia.CONTACTO, T.GOLPEAR)])
 def test_iniciativa_prepara_un_ataque_legal(distancia: Distancia, tipo: T) -> None:
     s = crear_estado()
     s = replace(s, p1=replace(s.p1, distancia=distancia), p2=replace(s.p2, distancia=distancia))

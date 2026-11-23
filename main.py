@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import argparse
 import os
+from dataclasses import replace
 from pathlib import Path
+from random import choice
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 import pygame
 
+from engine.models import Lugar
 from ui.screens import Combate, Seleccion
 
 RESOLUCION = (1280, 720)
@@ -24,7 +27,8 @@ class Aplicacion:
     def iniciar(self, ahora: int) -> None:
         if self.combate is not None:
             self.combate.cerrar()
-        self.combate = Combate(self.seleccion.config, ahora)
+        config = replace(self.seleccion.config, lugar=choice(tuple(Lugar)))
+        self.combate = Combate(config, ahora)
 
     def evento(self, evento: pygame.event.Event, ahora: int) -> None:
         if evento.type == pygame.QUIT:

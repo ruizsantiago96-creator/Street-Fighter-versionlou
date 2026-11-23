@@ -42,7 +42,7 @@ def clic(rect: pygame.Rect) -> pygame.event.Event:
     return pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=rect.center)
 
 
-@pytest.mark.parametrize("campo,valor", [("p1", n) for n in Nombre] + [("p2", n) for n in Nombre] + [("lugar", l) for l in Lugar] + [("hora", h) for h in Hora] + [("modo", m) for m in Modo] + [("profundidad", 2), ("profundidad", 3)])
+@pytest.mark.parametrize("campo,valor", [("p1", n) for n in Nombre] + [("p2", n) for n in Nombre] + [("hora", h) for h in Hora] + [("modo", m) for m in Modo] + [("profundidad", 2), ("profundidad", 3)])
 def test_seleccion_por_clic(pantalla: pygame.Surface, campo: str, valor: object) -> None:
     seleccion = Seleccion()
     cadena = str(valor.value) if isinstance(valor, (Nombre, Lugar, Hora, Modo)) else str(valor)
@@ -50,6 +50,49 @@ def test_seleccion_por_clic(pantalla: pygame.Surface, campo: str, valor: object)
     assert not seleccion.evento(clic(boton.rect))
     assert getattr(seleccion.config, campo) == valor
     seleccion.dibujar(pantalla, 150, boton.rect.center)
+
+
+def test_menu_sin_eleccion_de_escenario(pantalla: pygame.Surface) -> None:
+    seleccion = Seleccion()
+    assert not any(b.clave.startswith("lugar:") for b in seleccion.botones())
+    seleccion.dibujar(pantalla, 0, (0, 0))
+
+
+@pytest.mark.parametrize("lugar", Lugar)
+def test_inicio_sortea_entre_todos_los_escenarios(pantalla: pygame.Surface, monkeypatch: pytest.MonkeyPatch, lugar: Lugar) -> None:
+    def sortear(opciones: tuple[Lugar, ...]) -> Lugar:
+        assert opciones == tuple(Lugar)
+        return lugar
+    monkeypatch.setattr("main.choice", sortear)
+    app = Aplicacion()
+    try:
+        config = app.seleccion.config
+        app.evento(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN), 0)
+        assert app.combate is not None
+        assert app.combate.estado.escenario.lugar is lugar
+        assert app.combate.estado.escenario.hora is config.hora
+        assert app.seleccion.config == config
+    finally:
+        app.cerrar()
+
+
+def test_revancha_sortea_otra_vez(pantalla: pygame.Surface, monkeypatch: pytest.MonkeyPatch) -> None:
+    sorteos = iter((Lugar.LABORATORIO, Lugar.DOJO))
+    monkeypatch.setattr("main.choice", lambda opciones: next(sorteos))
+    app = Aplicacion()
+    try:
+        app.iniciar(0)
+        assert app.combate is not None
+        anterior = app.combate
+        assert anterior.estado.escenario.lugar is Lugar.LABORATORIO
+        anterior.estado = replace(anterior.estado, p2=replace(anterior.estado.p2, puntos_salud=0))
+        anterior.ko_instante = 0
+        app.evento(clic(anterior.botones_ko()[0].rect), 1000)
+        assert anterior.cerrado and app.combate is not anterior
+        assert app.combate.estado.escenario.lugar is Lugar.DOJO
+        assert app.combate.estado.p1.puntos_salud == app.combate.estado.p2.puntos_salud == 1000
+    finally:
+        app.cerrar()
 
 
 def test_inicio_menu_y_revancha(pantalla: pygame.Surface) -> None:
@@ -100,7 +143,7 @@ def test_movimiento_interpolado(combate: Combate) -> None:
 
 
 @pytest.mark.parametrize("nombre", Nombre)
-@pytest.mark.parametrize("postura,accion,colision", [(Postura.AGACHADA, Accion.REPOSO, Colision.VULNERABLE), (Postura.AEREO, Accion.ATACANDO, Colision.INVENCIBLE), (Postura.NEUTRAL, Accion.DEFENDIENDO, Colision.INVULNERABLE), (Postura.FINAL, Accion.REPOSO, Colision.VULNERABLE)])
+@pytest.mark.parametrize("postura,accion,colision", [(Postura.DESPLAZAMIENTO, Accion.REPOSO, Colision.VULNERABLE), (Postura.AEREO, Accion.ATACANDO, Colision.INVENCIBLE), (Postura.NEUTRAL, Accion.DEFENDIENDO, Colision.INVULNERABLE), (Postura.NEUTRAL, Accion.REPOSO, Colision.VULNERABLE)])
 def test_figuras_y_estados_visuales(pantalla: pygame.Surface, nombre: Nombre, postura: Postura, accion: Accion, colision: Colision) -> None:
     s = crear_estado(nombre, nombre)
     s = replace(s, p1=replace(s.p1, postura=postura, acciones=accion, colision=colision), p2=replace(s.p2, postura=postura, acciones=accion, colision=colision))
@@ -108,6 +151,7 @@ def test_figuras_y_estados_visuales(pantalla: pygame.Surface, nombre: Nombre, po
 
 
 def test_accion_jugador_bloquea_doble_clic_y_espera_700_ms(combate: Combate) -> None:
+    combate.estado = replace(combate.estado, p1=replace(combate.estado.p1, recarga_energia=1))
     boton, _ = next((b, op) for b, op in combate.hud.botones_accion(combate.estado, Actor.P1, True) if op.tipo is T.CARGAR)
     combate.evento(clic(boton.rect), 0)
     assert len(combate.log) == 1 and combate.turno is Actor.P2
@@ -133,7 +177,7 @@ def test_operadores_deshabilitados_y_tooltips(combate: Combate) -> None:
     combate.evento(clic(golpe.rect), 0)
     assert not combate.log
     carga = next(b for b, op in botones if op.tipo is T.CARGAR)
-    assert carga.habilitado and "Efecto:" in carga.ayuda
+    assert not carga.habilitado and "recarga_energia = 1" in carga.ayuda
 
 
 def test_ui_transmite_inactividad_y_la_reinicia_con_dano(combate: Combate) -> None:
@@ -179,7 +223,8 @@ def test_animacion_preserva_dano_antes_de_normalizar(combate: Combate, pantalla:
     s = combate.estado
     combate.estado = replace(s, p1=replace(s.p1, distancia=Distancia.CERCA), p2=replace(s.p2, distancia=Distancia.CERCA))
     combate.jugar(Operador(T.GOLPEAR), 0)
-    assert combate.estado.p2.acciones is Accion.REPOSO
+    assert combate.estado.p2.acciones is Accion.DANO
+    assert combate.estado.p1.colision is Colision.VULNERABLE
     assert combate.renderer.impacto is not None
     assert combate.renderer.impacto.despues.p2.acciones is Accion.DANO
     assert combate.log[-1].dano == 100
@@ -288,11 +333,11 @@ def test_historial_desplazable(combate: Combate, pantalla: pygame.Surface, monke
 def test_resumen_separa_dano_al_rival_y_dano_propio(combate: Combate) -> None:
     s = combate.estado
     combate.estado = replace(s, p1=replace(s.p1, distancia=Distancia.CERCA), p2=replace(s.p2, distancia=Distancia.CERCA))
-    for i, tipo in enumerate((T.GOLPEAR, T.BLOQUEAR, T.REPOSAR, T.REPOSAR, T.GOLPEAR)):
+    for i, tipo in enumerate((T.GOLPEAR, T.BLOQUEAR, T.AGARRAR)):
         combate.jugar(Operador(tipo), i * 1200)
     p1, p2 = combate.resumen_luchadores()
-    assert p1.dano_causado == 200
-    assert p2.dano_causado == 0 and p2.salud_final == 790
+    assert p1.dano_causado == 250
+    assert p2.dano_causado == 0 and p2.salud_final == 740
     assert combate.log[1].dano == 10 and combate.log[1].dano_rival == 0
 
 
@@ -313,7 +358,8 @@ def test_resumen_registra_especiales_de_ambos_personajes(combate: Combate) -> No
 def test_especial_consume_super_y_apaga_los_tres_bloques_del_hud(
     combate: Combate, pantalla: pygame.Surface, actor: Actor, tipo: T, tmp_path: Path,
 ) -> None:
-    nombre, distancia, _ = ESPECIALES[tipo]
+    nombre, distancias, _ = ESPECIALES[tipo]
+    distancia = distancias[0]
     s = crear_estado(nombre, nombre)
     s = replace(s, p1=replace(s.p1, distancia=distancia, medidor_super=2),
                 p2=replace(s.p2, distancia=distancia, medidor_super=2))
@@ -335,7 +381,7 @@ def test_especial_consume_super_y_apaga_los_tres_bloques_del_hud(
     assert combate.renderer.impacto.despues.personaje(actor).medidor_super == 0
     pygame.image.save(pantalla, str(tmp_path / "super_consumido.png"))
     # Ni la animación ni el siguiente turno restauran el medidor gastado.
-    combate.jugar(Operador(T.CARGAR), 700)
+    combate.jugar(Operador(T.BLOQUEAR), 700)
     combate.dibujar(pantalla, 800, (0, 0))
     assert combate.estado.personaje(actor).medidor_super == 0
     assert all(tuple(pantalla.get_at(pos))[:3] == BORDE for pos in centros)
@@ -362,20 +408,20 @@ def test_auditoria_super_en_partida_real(pantalla: pygame.Surface, p1: Nombre, p
             if c.estado.terminado:
                 break
         assert c.estado.terminado
-        if p1 is not Nombre.CAMMY:
+        if p2 is Nombre.MAKOTO:
             assert poderes > 0
         if p1 is Nombre.JULI and p2 is Nombre.MAKOTO:
-            # Reproduce la confusión: Lectura mantiene la barra llena, pero
-            # Seichusen sí la vacía en la misma partida y queda registrado.
+            # Lectura puede mantener la barra llena por prioridad inteligente.
             assert any(e.operador.tipo is T.LECTURA and e.cambio_super == "S3→3" for e in c.log)
-            assert any(e.operador.tipo is T.SEICHUSEN and e.cambio_super == "S3→0" for e in c.log)
+            # La prioridad inteligente puede mantener Lectura en cada turno;
+            # el drenaje de los especiales se comprueba aparte para ambos lados.
     finally:
         c.cerrar()
 
 
 def test_resumen_ko_permite_revisar_toda_la_pelea(combate: Combate, pantalla: pygame.Surface, monkeypatch: pytest.MonkeyPatch) -> None:
     combate.log = [EntradaLog(i + 1, Actor.P1, "Juli", Operador(T.CARGAR), 0) for i in range(20)]
-    combate.estado = replace(combate.estado, p2=replace(combate.estado.p2, puntos_salud=0, postura=Postura.FINAL))
+    combate.estado = replace(combate.estado, p2=replace(combate.estado.p2, puntos_salud=0, postura=Postura.NEUTRAL))
     combate.ko_instante = 0
     monkeypatch.setattr(pygame.mouse, "get_pos", lambda: combate.HISTORIAL_KO.center)
     combate.evento(pygame.event.Event(pygame.MOUSEWHEEL, y=-3, x=0), 1000)
@@ -392,14 +438,14 @@ def test_clic_historial_explica_estado_historico_y_normalizacion(combate: Combat
     combate.estado = replace(s, p1=replace(s.p1, distancia=Distancia.CERCA), p2=replace(s.p2, distancia=Distancia.CERCA))
     combate.jugar(Operador(T.GOLPEAR), 0)
     primero = combate.log[0]
-    combate.jugar(Operador(T.CARGAR), 700)
+    combate.jugar(Operador(T.BLOQUEAR), 700)
     assert primero.estado_antes is not None and primero.estado_antes.p2.puntos_salud == 1000
     assert primero.estado_operador is not None and primero.estado_operador.p2.acciones is Accion.DANO
-    assert primero.estado_despues is not None and primero.estado_despues.p2.acciones is Accion.REPOSO
+    assert primero.estado_despues is not None and primero.estado_despues.p2.acciones is Accion.DANO
     assert all(c.cumple for c in primero.condiciones)
     combate.evento(clic(pygame.Rect(958, 335, 275, 30)), 800)
     assert combate.detalle is not None and combate.detalle.entrada is primero
-    assert any("Recibiendo_daño → Reposo" in fila for fila in combate.detalle.filas())
+    assert any("Atacando → Vulnerable" in fila for fila in combate.detalle.filas())
     combate.dibujar(pantalla, 800, (0, 0))
     pygame.image.save(pantalla, str(tmp_path / "reglas_historicas.png"))
     estado = combate.estado
@@ -433,14 +479,14 @@ def test_clic_derecho_consulta_requisitos_sin_ejecutar(combate: Combate, pantall
     anterior = combate.estado
     combate.evento(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=3, pos=boton.rect.center), 0)
     assert combate.detalle is not None and combate.detalle.entrada.turno == 0
-    assert any(not c.cumple and c.regla == "distancia Cerca" for c in combate.detalle.entrada.condiciones)
+    assert any(not c.cumple and c.regla == "distancia Cerca o Contacto" for c in combate.detalle.entrada.condiciones)
     assert combate.estado == anterior and not combate.log and not combate.puede_jugar(0)
     combate.dibujar(pantalla, 10, (0, 0))
 
 
 def test_detalle_navega_y_congela_decision_cpu_pendiente(combate: Combate) -> None:
-    combate.jugar(Operador(T.CARGAR), 0)
-    combate.jugar(Operador(T.CARGAR), 700)
+    combate.jugar(Operador(T.DESPLAZAR), 0)
+    combate.jugar(Operador(T.ACERCAR), 700)
     combate.turno = Actor.P2
     futuro: Future[DecisionIA] = Future()
     futuro.set_result(elegir_operador(combate.estado, Actor.P2))
@@ -458,3 +504,50 @@ def test_detalle_navega_y_congela_decision_cpu_pendiente(combate: Combate) -> No
     assert len(combate.log) == 2
     combate.actualizar(2400, 0.016)
     assert len(combate.log) == 3
+
+
+@pytest.mark.parametrize("p1", list(Nombre))
+@pytest.mark.parametrize("p2", list(Nombre))
+def test_exposicion_completa_desde_ui_y_resumen(pantalla: pygame.Surface, p1: Nombre, p2: Nombre) -> None:
+    c = Combate(Configuracion(p1=p1, p2=p2, modo=Modo.IA_IA, profundidad=2), 0)
+    try:
+        for _ in range(90):
+            ahora = c.siguiente_ia
+            c.actualizar(ahora, 1 / 60)
+            if c.futuro is not None:
+                c.futuro.result(timeout=10)
+                c.actualizar(ahora, 1 / 60)
+            assert not c.error
+            if c.estado.terminado:
+                break
+        assert c.estado.terminado
+        assert {e.actor for e in c.log if e.operador.prioridad} == set(Actor)
+        assert all(r.inteligentes >= 1 for r in c.resumen_luchadores())
+        assert any(e.operador.tipo is not T.LECTURA for e in c.log)
+        assert all(all(cond.cumple for cond in e.condiciones) for e in c.log)
+        c.dibujar(pantalla, ahora + 900, (0, 0))
+    finally:
+        c.cerrar()
+
+
+def test_menu_permite_elegir_exposicion_o_competitivo() -> None:
+    seleccion = Seleccion(Configuracion(modo=Modo.IA_IA))
+    competitivo = next(b for b in seleccion.botones() if b.clave == "exposicion:0")
+    seleccion.evento(clic(competitivo.rect))
+    assert not seleccion.config.exposicion
+    exposicion = next(b for b in seleccion.botones() if b.clave == "exposicion:1")
+    seleccion.evento(clic(exposicion.rect))
+    assert seleccion.config.exposicion
+
+
+def test_ia_vs_ia_competitivo_conserva_minimax(pantalla: pygame.Surface) -> None:
+    c = Combate(Configuracion(modo=Modo.IA_IA, exposicion=False), 0)
+    try:
+        c.actualizar(1200, 1 / 60)
+        if c.futuro is not None:
+            c.futuro.result(timeout=10)
+            c.actualizar(1200, 1 / 60)
+        assert c.ultima_decision is not None
+        assert c.ultima_decision.estrategia == "Minimax"
+    finally:
+        c.cerrar()

@@ -29,12 +29,18 @@ def caso(tipo: T, actor: Actor) -> Estado:
     if tipo is T.LIBERAR:
         p = replace(p, puntos_salud=400)
     if tipo is T.FINTA:
-        p, r = replace(p, medidor_super=2), replace(r, postura=Postura.AGACHADA)
+        p, r = replace(p, medidor_super=2), replace(r, acciones=Accion.DEFENDIENDO)
+    if tipo is T.ATERRIZAR:
+        p = replace(p, postura=Postura.AEREO)
+    if tipo is T.CARGAR:
+        p = replace(p, recarga_energia=1)
+    if p.nombre is Nombre.JULI:
+        p = replace(p, especial=Especial.ACTIVO)
     return s.con_personajes(actor, p, r)
 
 
 @pytest.mark.parametrize("actor", Actor)
-@pytest.mark.parametrize("tipo", list(T)[:13])
+@pytest.mark.parametrize("tipo", list(T))
 def test_trece_operadores_desde_ambos_lados(tipo: T, actor: Actor) -> None:
     s = caso(tipo, actor)
     op = Operador(tipo)
@@ -48,25 +54,30 @@ def test_trece_operadores_desde_ambos_lados(tipo: T, actor: Actor) -> None:
 
 @pytest.mark.parametrize("actor", Actor)
 @pytest.mark.parametrize("tipo,lado,cambios", [
-    (T.DESPLAZAR, "propio", {"postura": Postura.AGACHADA}),
-    (T.GOLPEAR, "propio", {"postura": Postura.AGACHADA}),
+    (T.DESPLAZAR, "propio", {"postura": Postura.AEREO}),
+    (T.GOLPEAR, "propio", {"postura": Postura.AEREO}),
     (T.GOLPEAR, "propio", {"acciones": Accion.ATACANDO}),
     (T.GOLPEAR, "rival", {"colision": Colision.INVULNERABLE}),
-    (T.BLOQUEAR, "rival", {"acciones": Accion.REPOSO}),
     (T.BLOQUEAR, "propio", {"acciones": Accion.ATACANDO}),
     (T.SALTAR, "rival", {"acciones": Accion.REPOSO}),
-    (T.SALTAR, "propio", {"postura": Postura.AGACHADA}),
-    (T.AGARRAR, "propio", {"acciones": Accion.REPOSO}),
+    (T.SALTAR, "propio", {"postura": Postura.AEREO}),
+    (T.AGARRAR, "propio", {"postura": Postura.AEREO}),
     (T.AGARRAR, "rival", {"acciones": Accion.REPOSO}),
     (T.SPIN_DRIVE, "propio", {"especial": Especial.LIBERADA}),
     (T.LIBERAR, "propio", {"especial": Especial.LIBERADA}),
     (T.LIBERAR, "propio", {"medidor_super": 2}),
     (T.LIBERAR, "rival", {"acciones": Accion.REPOSO}),
     (T.FINTA, "propio", {"medidor_super": 1}),
-    (T.FINTA, "rival", {"postura": Postura.NEUTRAL}),
+    (T.FINTA, "rival", {"acciones": Accion.REPOSO}),
     (T.DRENAR, "propio", {"medidor_super": 3}),
     (T.DRENAR, "rival", {"acciones": Accion.REPOSO}),
     (T.LECTURA, "rival", {"acciones": Accion.REPOSO}),
+    (T.CARGAR, "propio", {"recarga_energia": 0}),
+    (T.CARGAR, "propio", {"acciones": Accion.DANO}),
+    (T.CARGAR, "propio", {"medidor_super": 3}),
+    (T.ATERRIZAR, "propio", {"postura": Postura.NEUTRAL}),
+    (T.DESPLAZAR, "rival", {"postura": Postura.AEREO}),
+    (T.LIBERAR, "propio", {"puntos_salud": 460}),
 ])
 def test_rechaza_precondicion_rota(tipo: T, lado: str, cambios: dict[str, Any], actor: Actor) -> None:
     s = caso(tipo, actor)

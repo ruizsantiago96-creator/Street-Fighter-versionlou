@@ -7,7 +7,7 @@ from functools import lru_cache
 import pygame
 
 from engine.ai import DecisionIA
-from engine.models import Accion, Actor, Colision, Distancia, Especial, Estado, Nombre, Postura, RGB
+from engine.models import Actor, Estado, Nombre, RGB
 from engine.operators import Condicion, ESPECIALES, INTELIGENTES, OPERADORES, Operador, TipoOperador as T
 
 FONDO: RGB = (11, 15, 24)
@@ -102,66 +102,34 @@ def tooltip(s: pygame.Surface, contenido: str, mouse: tuple[int, int]) -> None:
 
 
 EFECTOS: dict[T, str] = {
-    T.DESPLAZAR: "Ambos pasan de Lejos a Media, en Desplazamiento / Reposo.",
-    T.GOLPEAR: "100 de daño; Atacando; recarga de energía = 1.",
-    T.BLOQUEAR: "Invulnerable / Defendiendo; pierdes 10 de salud adicionales. No revierte el golpe anterior.",
-    T.SALTAR: "Salto invulnerable; Cerca → Media o Media → Lejos.",
-    T.AGARRAR: "150 de daño y ambos a Lejos; ejecutas un agarre.",
+    T.DESPLAZAR: "Ambos pasan de Lejos a Media, en Desplazamiento / Reposo / Vulnerable.",
+    T.GOLPEAR: "100 de daño en Cerca o Contacto; activa recarga = 1. Un impacto derriba al rival aéreo.",
+    T.BLOQUEAR: "Invulnerable / Defendiendo. Solo pierdes 10 HP si el rival está Atacando; no revierte daño previo.",
+    T.SALTAR: "Salto invulnerable en Reposo; Cerca → Media o Media → Lejos. Después debes Aterrizar, salvo derribo.",
+    T.ATERRIZAR: "Desciende voluntariamente: Neutral / Reposo / Vulnerable. No consume super.",
+    T.AGARRAR: "Rompe guardia en Cerca o Contacto: 150 de daño, activa recarga = 1 y conserva la distancia.",
     T.SPIN_DRIVE: "300 de daño, invencibilidad; consume 3 de super y apaga recarga.",
-    T.KILLER_BEE: "300 de daño, invencibilidad y Contacto; consume 3 de super.",
-    T.PSYCHO_CRUSHER: "350 de daño, invencibilidad y Contacto; consume 3 de super.",
-    T.SEICHUSEN: "350 de daño, invencibilidad; consume 3 de super y apaga recarga.",
-    T.LIBERAR: "350 de daño; Juli Liberada e invencible; consume 3 de super.",
-    T.FINTA: "250 de daño; salto invencible hasta Contacto. Conserva el medidor según la tabla EEO.",
-    T.DRENAR: "Invencibilidad; ganas 1 de super y el rival pierde 1 y entra en Recuperacion.",
-    T.LECTURA: "150 de daño y Contacto; super = 3 e invencibilidad; rival en Recuperacion.",
-    T.ACERCAR: "Media → Cerca → Contacto; vuelves a Neutral / Reposo.",
-    T.ALEJAR: "Contacto → Cerca → Media → Lejos; vuelves a Neutral / Reposo.",
-    T.AGACHAR: "Adopta postura Agachada.", T.GUARDIA: "Adopta Defendiendo y permite una reacción táctica del rival.",
-    T.CARGAR: "Suma 1 al medidor de super (máximo 3).", T.REPOSAR: "Vuelve a Neutral / Reposo / Vulnerable para preparar otra acción.",
+    T.KILLER_BEE: "300 de daño desde Media o Contacto; consume 3 de super, apaga recarga y lleva a Contacto.",
+    T.PSYCHO_CRUSHER: "350 de daño desde Media o Cerca; consume 3 de super y apaga recarga. Contacto / Desplazamiento.",
+    T.SEICHUSEN: "350 de daño desde Cerca o Contacto; consume 3 de super, apaga recarga y lleva a Contacto.",
+    T.LIBERAR: "350 de daño; Juli Liberada e invencible; consume 3 de super y conserva su salud actual.",
+    T.FINTA: "250 de daño contra Defendiendo en Media. Contacto / Aéreo, activa recarga y conserva el super.",
+    T.DRENAR: "Ganas 1 de super; el rival pierde hasta 1 y entra en Recuperacion. Conservas tu salud actual.",
+    T.LECTURA: "150 de daño y Contacto; llena super a 3. Conservas tu salud; rival en Recuperacion.",
+    T.ACERCAR: "Lejos → Media → Cerca → Contacto; Desplazamiento / Reposo / Vulnerable.",
+    T.ALEJAR: "Contacto → Cerca → Media → Lejos; Desplazamiento / Reposo / Vulnerable.",
+    T.CARGAR: "Consume recarga = 1 para sumar 1 de super (máximo 3). Requiere Reposo o Cargando en tierra.",
 }
 
 
 def explicar_operador(op: Operador, estado: Estado, actor: Actor) -> str:
-    """El motor decide la validez; esta función explica las condiciones al usuario."""
+    """La explicación usa el mismo contrato del motor, sin duplicar reglas."""
     if estado.terminado:
         return "El combate terminó: ningún operador se puede aplicar."
-    if op.puede_aplicarse(estado, actor):
+    faltantes = [c.regla for c in op.condiciones(estado, actor) if not c.cumple]
+    if not faltantes:
         return "Efecto: " + EFECTOS[op.tipo]
-    p, r = estado.personaje(actor), estado.personaje(actor.rival)
-    t = op.tipo
-    requisitos: list[tuple[bool, str]] = []
-    if t is T.DESPLAZAR:
-        requisitos = [(p.distancia is Distancia.LEJOS, "distancia Lejos"), (p.postura is Postura.NEUTRAL, "postura Neutral")]
-    elif t is T.GOLPEAR:
-        requisitos = [(p.distancia is Distancia.CERCA, "distancia Cerca"), (p.postura is Postura.NEUTRAL, "postura Neutral"), (p.acciones is not Accion.ATACANDO, "dejar de Atacar: usa Volver a neutral"), (r.colision is Colision.VULNERABLE, "rival Vulnerable")]
-    elif t is T.BLOQUEAR:
-        requisitos = [(p.distancia is Distancia.CERCA, "distancia Cerca"), (r.acciones is Accion.ATACANDO, "rival Atacando"), (p.acciones is not Accion.ATACANDO, "no estar Atacando")]
-    elif t is T.SALTAR:
-        requisitos = [(p.distancia in (Distancia.CERCA, Distancia.MEDIA), "distancia Cerca o Media"), (r.acciones is Accion.ATACANDO, "rival Atacando"), (p.postura is Postura.NEUTRAL, "postura Neutral")]
-    elif t is T.AGARRAR:
-        requisitos = [(p.distancia is Distancia.CONTACTO, "distancia Contacto"), (p.acciones is Accion.ATACANDO, "estar Atacando"), (r.acciones is Accion.DEFENDIENDO, "rival Defendiendo")]
-    elif t in ESPECIALES:
-        nombre, distancia, _ = ESPECIALES[t]
-        requisitos = [(p.nombre is nombre, f"personaje {nombre.value}"), (p.medidor_super == 3, "super = 3"), (p.distancia is distancia, f"distancia {distancia.value}")]
-        if t is T.SPIN_DRIVE:
-            requisitos.append((p.especial is Especial.ACTIVO, "especial Activo"))
-    elif t is T.LIBERAR:
-        requisitos = [(p.nombre is Nombre.JULI, "personaje Juli"), (p.puntos_salud <= 400, "salud ≤ 400"), (p.medidor_super == 3, "super = 3"), (p.especial is Especial.ACTIVO, "especial Activo"), (r.acciones is Accion.ATACANDO, "rival Atacando"), (r.distancia is Distancia.CONTACTO, "distancia Contacto")]
-    elif t is T.FINTA:
-        requisitos = [(p.nombre is Nombre.CAMMY, "personaje Cammy"), (p.medidor_super >= 2, "super ≥ 2"), (p.distancia is Distancia.MEDIA, "distancia Media"), (r.postura is Postura.AGACHADA or r.acciones is Accion.DEFENDIENDO, "rival Agachada o Defendiendo")]
-    elif t is T.DRENAR:
-        requisitos = [(p.nombre is Nombre.BISON, "personaje M. Bison"), (p.medidor_super < 3, "super < 3"), (r.acciones is Accion.ATACANDO, "rival Atacando"), (r.distancia is Distancia.CERCA, "distancia Cerca")]
-    elif t is T.LECTURA:
-        requisitos = [(p.nombre is Nombre.MAKOTO, "personaje Makoto"), (r.acciones is Accion.ATACANDO, "rival Atacando"), (r.distancia in (Distancia.CERCA, Distancia.CONTACTO), "distancia Cerca o Contacto")]
-    elif t is T.ACERCAR:
-        requisitos = [(p.distancia in (Distancia.MEDIA, Distancia.CERCA), "distancia Media o Cerca")]
-    elif t is T.ALEJAR:
-        requisitos = [(p.distancia is not Distancia.LEJOS, "estar a menos de Lejos")]
-    elif t is T.CARGAR:
-        requisitos = [(p.medidor_super < 3, "super < 3")]
-    return "Falta: " + "; ".join(mensaje for cumple, mensaje in requisitos if not cumple) + "."
-
+    return "Falta: " + "; ".join(faltantes) + "."
 
 ESPECIAL_PERSONAJE = {Nombre.JULI: T.SPIN_DRIVE, Nombre.CAMMY: T.KILLER_BEE, Nombre.BISON: T.PSYCHO_CRUSHER, Nombre.MAKOTO: T.SEICHUSEN}
 INTELIGENTE_PERSONAJE = {Nombre.JULI: T.LIBERAR, Nombre.CAMMY: T.FINTA, Nombre.BISON: T.DRENAR, Nombre.MAKOTO: T.LECTURA}
@@ -219,15 +187,15 @@ class HUD:
                 pygame.draw.rect(s, ORO if i < p.medidor_super else BORDE, (x + 14 + i * 32, 79, 26, 10), border_radius=2)
             texto(s, f"SUPER {p.medidor_super}/3", (x + 112, 75), 13, ORO if p.medidor_super else TENUE, True)
             texto(s, f"{p.postura.value} · {p.colision.value}", (x + 205, 75), 14, TENUE, ancho=214)
-            texto(s, f"{p.especial.value}  /  {p.acciones.value}", (x + 14, 99), 14, TENUE, ancho=399)
+            texto(s, f"{p.especial.value} / {p.acciones.value} / Recarga {p.recarga_energia}", (x + 14, 99), 14, TENUE, ancho=399)
         texto(s, f"{numero:02d}", (440, 4), 14, ORO)
 
     def botones_accion(self, estado: Estado, actor: Actor, habilitado: bool) -> list[tuple[Boton, Operador]]:
         p = estado.personaje(actor)
         grupos = [
-            (list(T)[:5], 548, 5, AZUL),
+            ([T.DESPLAZAR, T.GOLPEAR, T.BLOQUEAR, T.SALTAR, T.AGARRAR], 548, 5, AZUL),
             ([ESPECIAL_PERSONAJE[p.nombre], INTELIGENTE_PERSONAJE[p.nombre]], 600, 2, ORO),
-            ([T.ACERCAR, T.ALEJAR, T.AGACHAR, T.GUARDIA, T.CARGAR, T.REPOSAR], 654, 6, VERDE),
+            ([T.ACERCAR, T.ALEJAR, T.CARGAR, T.ATERRIZAR], 654, 4, VERDE),
         ]
         resultado: list[tuple[Boton, Operador]] = []
         for tipos, y, columnas, color in grupos:
@@ -291,10 +259,13 @@ class HUD:
         Boton(self.ULTIMO_MOVIMIENTO, etiqueta, "detalle", VERDE).dibujar(s, mouse)
 
     def inspector(self, s: pygame.Surface, estado: Estado, log: list[EntradaLog], decision: DecisionIA | None,
-                  actor_ia: Actor | None, estado_turno: str, profundidad: int) -> None:
+                  actor_ia: Actor | None, estado_turno: str, profundidad: int,
+                  objetivos: tuple[bool, ...] | None = None) -> None:
         panel(s, pygame.Rect(934, 16, 330, 688))
         texto(s, "INSPECTOR EEO + IA", (950, 30), 20, ORO, True)
-        texto(s, "ESPACIO DE ESTADOS / EN VIVO", (950, 57), 11, TENUE)
+        subtitulo = ("EXPOSICIÓN / " + " · ".join(f"P{i + 1} {'OK' if usado else 'PENDIENTE'}"
+                      for i, usado in enumerate(objetivos))) if objetivos is not None else "ESPACIO DE ESTADOS / EN VIVO"
+        texto(s, subtitulo, (950, 57), 11, VERDE if objetivos and all(objetivos) else TENUE)
         texto(s, f"[ ({estado.escenario.hora.value},", (950, 82), 16, AZUL)
         fin = parrafo(s, estado.escenario.lugar.value + "),", (965, 105), 275, 15, AZUL)
         for actor, y in ((Actor.P1, max(156, fin + 5)), (Actor.P2, max(228, fin + 77))):
@@ -323,11 +294,16 @@ class HUD:
             alto = max(12, 137 * 4 // len(log))
             pos = 333 + round((137 - alto) * (1 - self.scroll / max(1, len(log) - 4)))
             pygame.draw.rect(s, AZUL, (1238, pos, 3, alto), border_radius=1)
-        texto(s, "PENSAMIENTO MINIMAX", (950, 490), 15, ORO, True)
+        plan = decision is not None and decision.estrategia == "Plan EEO"
+        titulo = ("PLAN EEO / EXPOSICIÓN" if plan or (decision is None and objetivos is not None)
+                  else "MINIMAX / CIERRE" if decision and "cierre" in decision.estrategia else "PENSAMIENTO MINIMAX")
+        texto(s, titulo, (950, 490), 15, ORO, True)
         if decision is None:
             parrafo(s, "Esperando la primera decisión de la CPU…", (950, 527), 290)
         else:
-            texto(s, f"{actor_ia.value.upper() if actor_ia else 'CPU'} · profundidad {profundidad} · {decision.nodos_visitados} nodos", (950, 515), 12, TENUE)
+            detalle = ("Paso planificado · puntaje de referencia" if plan else
+                       f"{actor_ia.value.upper() if actor_ia else 'CPU'} · profundidad {profundidad} · {decision.nodos_visitados} nodos")
+            texto(s, detalle, (950, 515), 12, TENUE)
             for i, jugada in enumerate(decision.evaluaciones):
                 y = 541 + i * 23
                 elegida = jugada.operador == decision.operador

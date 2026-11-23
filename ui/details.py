@@ -48,7 +48,7 @@ class DetalleMovimiento:
             return filas + ["VISTA PREVIA / AÚN NO EJECUTADO", "Los indicadores muestran qué condiciones se cumplen en este momento."]
         filas += ["1 / APLICAR EL OPERADOR", *cambios(e.estado_antes, e.estado_operador), ""]
         if e.estado_despues is not None:
-            filas += ["2 / PREPARAR EL SIGUIENTE TURNO", "La normalización es una regla auxiliar, posterior al operador.",
+            filas += ["2 / PREPARAR EL SIGUIENTE TURNO", "N2: colisión ofensiva del rival → Vulnerable. N3: daño recibido del actor entrante → 0. Las acciones y el aire se conservan; N1 está en los efectos del operador.",
                       *cambios(e.estado_operador, e.estado_despues)]
         return filas
 
